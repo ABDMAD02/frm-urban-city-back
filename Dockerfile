@@ -15,7 +15,11 @@ RUN apt-get update \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY alembic.ini alembic/ db/ app/ smoke_test.py ./
+COPY alembic.ini .
+COPY alembic/ alembic/
+COPY db/ db/
+COPY app/ app/
+COPY smoke_test.py .
 COPY scripts/start.sh scripts/start.sh
 RUN chmod +x scripts/start.sh
 
