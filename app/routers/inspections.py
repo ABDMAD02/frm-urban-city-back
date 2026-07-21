@@ -1,0 +1,96 @@
+"""Проверки и повторные проверки. Здесь живёт серверная бизнес-логика:
+авто-создание предписания и пересчёт статуса объекта (порт domain/usecases.ts)."""
+from fastapi import APIRouter, Depends, HTTPException
+
+from .. import config
+from ..deps import StoreDep
+from ..security import get_current_user
+from ..fsm import can_transition
+from ..models import (
+    Inspection, CreateInspectionRequest, InspectionResultView, ReinspectionRequest,
+    CityObject, Prescription, HistoryEvent, User,
+)
+from ..enums import (
+    ObjectStatus, InspectionResult, ReinspectionResult, PrescriptionStatus, HistoryType,
+)
+
+router = APIRouter(tags=["Проверки"])
+
+
+@router.get("/inspections", response_model=list[Inspection], summary="Список проверок")
+def list_inspections(repo: StoreDep, user: User = Depends(get_current_user)):
+    return repo.list_inspections()
+
+
+@router.post("/objects/{oid}/inspections", response_model=InspectionResultView, status_code=201,
+             summary="Провести первичную проверку")
+def add_inspection(oid: str, body: CreateInspectionRequest, repo: StoreDep, user: User = Depends(get_current_user)):
+    obj = repo.find_object(oid)
+    if obj is None:
+        raise HTTPException(404, "Объект не найден")
+    if not body.photos:
+        raise HTTPException(400, "Фотофиксация обязательна: приложите минимум одно фото")
+
+    insp = body.inspection
+    insp.objectId = oid
+    repo.add_inspection(insp)
+    for ph in body.photos:
+        repo.add_photo_if_missing(ph, object_id=oid, inspection_id=insp.id)
+
+    has_issues = insp.result == InspectionResult.has_remarks
+    outcome = ObjectStatus.has_remarks if has_issues else ObjectStatus.compliant
+    if not can_transition(obj.status, outcome):
+        raise HTTPException(409, f"Недопустимый переход статуса: {obj.status.value} → {outcome.value}")
+    obj = repo.set_object_status(oid, outcome)
+
+    repo.append_history(HistoryEvent(
+        id="", objectId=oid, type=HistoryType.inspection_done,
+        actor=user.name, date=config.DEMO_TODAY,
+        text=body.note or ("Проведена проверка — выявлены замечания" if has_issues else "Проведена проверка — соответствует дизайн-коду"),
+    ))
+
+    prescription = None
+    if has_issues:
+        obj = repo.set_object_status(oid, ObjectStatus.prescription_issued)
+        prescription = Prescription(
+            id="", objectId=oid, inspectionId=insp.id,
+            title="Устранение выявленных нарушений дизайн-кода",
+            description=insp.comment or "Привести объект в соответствие с дизайн-кодом города.",
+            issuedAt=config.DEMO_TODAY, deadline=config.DEMO_TODAY, reinspectionDate=config.DEMO_TODAY,
+            status=PrescriptionStatus.open,
+        )
+        prescription = repo.add_prescription(prescription)
+        repo.append_history(HistoryEvent(
+            id="", objectId=oid, type=HistoryType.prescription_issued,
+            actor=user.name, date=config.DEMO_TODAY, text="Выдано предписание",
+        ))
+
+    obj = repo.find_object(oid)
+    return InspectionResultView(object=obj, inspection=insp, prescription=prescription)
+
+
+_REINSPECT = {
+    ReinspectionResult.fixed: (ObjectStatus.violation_fixed, "Повторная проверка: нарушение устранено"),
+    ReinspectionResult.partial: (ObjectStatus.prescription_issued, "Повторная проверка: устранено частично — предписание продлено"),
+    ReinspectionResult.not_fixed: (ObjectStatus.prescription_issued, "Повторная проверка: нарушение не устранено — предписание продлено"),
+}
+
+
+@router.post("/objects/{oid}/reinspections", response_model=CityObject, summary="Повторная проверка")
+def reinspect(oid: str, body: ReinspectionRequest, repo: StoreDep, user: User = Depends(get_current_user)):
+    obj = repo.find_object(oid)
+    if obj is None:
+        raise HTTPException(404, "Объект не найден")
+    if obj.status == ObjectStatus.prescription_issued and can_transition(
+        ObjectStatus.prescription_issued, ObjectStatus.awaiting_reinspection
+    ):
+        obj = repo.set_object_status(oid, ObjectStatus.awaiting_reinspection)
+    target, note = _REINSPECT[body.result]
+    if not can_transition(obj.status, target):
+        raise HTTPException(409, f"Недопустимый переход статуса: {obj.status.value} → {target.value}")
+    obj = repo.set_object_status(oid, target)
+    repo.append_history(HistoryEvent(
+        id="", objectId=oid, type=HistoryType.reinspection,
+        actor=user.name, date=config.DEMO_TODAY, text=note,
+    ))
+    return obj

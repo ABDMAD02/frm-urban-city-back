@@ -1,0 +1,11 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+gunicorn>=22.0
+pydantic>=2.6
+PyJWT>=2.8
+python-multipart>=0.0.9
+python-dotenv>=1.0
+# Слой БД (db/ + alembic/). Не используется in-memory сервером, нужен для PostgreSQL-режима.
+SQLAlchemy>=2.0
+alembic>=1.13
+psycopg[binary]>=3.1

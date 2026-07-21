@@ -1,0 +1,40 @@
+# Локальный prod-like стенд: API + PostgreSQL.
+# Запуск: docker compose up --build
+# API: http://localhost:8000/docs
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: urban
+      POSTGRES_PASSWORD: urban
+      POSTGRES_DB: urban_city
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U urban -d urban_city"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    ports:
+      - "8000:8080"
+    environment:
+      ENV: production
+      PORT: "8080"
+      JWT_SECRET: local-dev-secret-at-least-32-characters-long
+      CORS_ORIGINS: http://localhost:3000,http://localhost:3001
+      DATABASE_URL: postgresql+psycopg://urban:urban@db:5432/urban_city
+      USE_DB: "1"
+      RUN_MIGRATIONS: "1"
+      WEB_CONCURRENCY: "2"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
