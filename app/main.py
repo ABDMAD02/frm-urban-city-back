@@ -25,8 +25,15 @@ from .routers import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    config.validate_production_settings()
-    init_database()
+    try:
+        config.validate_production_settings()
+        init_database()
+    except Exception:
+        # Иначе gunicorn пишет только «Worker failed to boot» без traceback.
+        import traceback
+
+        traceback.print_exc()
+        raise
     yield
 
 
