@@ -33,22 +33,50 @@ def is_seeded(session: Session) -> bool:
 
 def run_seed(session: Session) -> None:
     if is_seeded(session):
+        print("Seed skipped: city_object already has rows")
         return
 
+    # Справочники — идемпотентно (после прошлых частичных ошибок).
+    existing_districts = set(session.scalars(select(m.District.id)).all())
     for d in seed.DISTRICTS:
-        session.add(m.District(id=d.id, name=d.name))
+        if d.id not in existing_districts:
+            session.add(m.District(id=d.id, name=d.name))
     session.flush()
 
+    existing_mds = set(session.scalars(select(m.Microdistrict.id)).all())
     for md in seed.MICRODISTRICTS:
-        session.add(m.Microdistrict(id=md.id, district_id=md.districtId, name=md.name))
+        if md.id not in existing_mds:
+            session.add(m.Microdistrict(id=md.id, district_id=md.districtId, name=md.name))
     session.flush()
 
+    existing_types = set(session.scalars(select(m.ObjectType.name)).all())
     for t_name, t_cat in seed.TYPES:
-        session.add(m.ObjectType(name=t_name, category=t_cat))
-    session.flush()  # FK city_object.type → object_type.name
+        if t_name not in existing_types:
+            session.add(
+                m.ObjectType(
+                    id=uuid_for_code(f"type:{t_name}"),
+                    name=t_name,
+                    category=t_cat,
+                )
+            )
+    session.flush()
+
+    type_names = set(session.scalars(select(m.ObjectType.name)).all())
+    print(f"Seed object_type count={len(type_names)} sample={sorted(type_names)[:5]}")
+    if "Магазин" not in type_names:
+        raise RuntimeError(
+            f"object_type seed failed: 'Магазин' missing after flush, have={sorted(type_names)}"
+        )
 
     owner_uuid: dict[str, m.Owner] = {}
+    existing_owners = {
+        row.code: row
+        for row in session.scalars(select(m.Owner).where(m.Owner.code.is_not(None))).all()
+    }
     for o in seed.OWNERS:
+        if o.id in existing_owners:
+            owner_uuid[o.id] = existing_owners[o.id]
+            continue
         row = m.Owner(
             id=uuid_for_code(o.id),
             code=o.id,
@@ -63,10 +91,16 @@ def run_seed(session: Session) -> None:
     session.flush()
 
     user_uuid: dict[str, m.AppUser] = {}
+    existing_users = {
+        row.code: row
+        for row in session.scalars(select(m.AppUser).where(m.AppUser.code.is_not(None))).all()
+    }
     for u in seed.USERS:
+        if u.id in existing_users:
+            user_uuid[u.id] = existing_users[u.id]
+            continue
         owner_id = None
         if u.role.value == "owner" and u.ownerObjectIds:
-            # u2 → w2 (ИП Сапаров)
             owner_id = owner_uuid["w2"].id
         row = m.AppUser(
             id=uuid_for_code(u.id),
@@ -88,6 +122,8 @@ def run_seed(session: Session) -> None:
 
     object_uuid: dict[str, m.CityObject] = {}
     for o in seed.OBJECTS:
+        if o.type not in type_names:
+            raise RuntimeError(f"object type {o.type!r} missing before city_object insert")
         row = m.CityObject(
             id=uuid_for_code(o.id),
             code=o.id,
@@ -109,6 +145,7 @@ def run_seed(session: Session) -> None:
         session.add(row)
         object_uuid[o.id] = row
     session.flush()
+    print(f"Seed city_object count={len(object_uuid)}")
 
     photo_uuid: dict[str, m.Photo] = {}
     photo_objects = {"p1": "o5", "p2": "o5", "p3": "o12", "p4": "o1", "p5": "o12", "p6": "o12"}
