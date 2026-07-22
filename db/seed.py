@@ -194,8 +194,9 @@ def run_seed(session: Session) -> None:
 
 
 def run_seed_cli() -> None:
-    from db.base import SessionLocal
+    from db.base import SessionLocal, get_engine
 
+    get_engine()
     with SessionLocal() as session:
         run_seed(session)
         session.commit()
