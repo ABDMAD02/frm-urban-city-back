@@ -8,7 +8,7 @@ from fastapi import Depends
 
 from app import config
 from app.storage.memory import MemoryStore
-from db.base import SessionLocal
+from db.base import SessionLocal, get_engine
 from db.repository import DbStore
 from db.seed import run_seed
 
@@ -26,6 +26,7 @@ def get_store() -> Generator[Store, None, None]:
         yield _memory
         return
 
+    get_engine()
     session = SessionLocal()
     repo = DbStore(session)
     try:
@@ -42,16 +43,10 @@ StoreDep = Annotated[Store, Depends(get_store)]
 
 
 def init_database() -> None:
-    """Миграции + seed при старте (вызывается из lifespan)."""
+    """Seed при старте. Миграции уже делает scripts/start.sh (один раз до gunicorn)."""
     if not use_database():
         return
-    from alembic import command
-    from alembic.config import Config
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parent.parent
-    alembic_cfg = Config(str(root / "alembic.ini"))
-    command.upgrade(alembic_cfg, "head")
+    get_engine()
     with SessionLocal() as session:
         run_seed(session)
         session.commit()
