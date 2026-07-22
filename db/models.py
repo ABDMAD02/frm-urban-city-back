@@ -95,6 +95,7 @@ class Owner(Base):
     id: Mapped[uuid.UUID] = _uuid_pk()
     code: Mapped[Optional[str]] = mapped_column(Text, unique=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    legal_form: Mapped[LegalForm] = mapped_column(pg_enum(LegalForm), nullable=False)
     bin: Mapped[Optional[str]] = mapped_column(Text)  # БИН/ИИН, NULL для физлица без ИИН
     phone: Mapped[str] = mapped_column(Text, nullable=False)
     email: Mapped[Optional[str]] = mapped_column(Text)
