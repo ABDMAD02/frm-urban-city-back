@@ -40,7 +40,11 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Применение миграций через живое подключение."""
-    connectable = create_engine(get_database_url(), poolclass=pool.NullPool)
+    connectable = create_engine(
+        get_database_url(),
+        poolclass=pool.NullPool,
+        connect_args={"prepare_threshold": None},
+    )
     with connectable.connect() as connection:
         context.configure(
             connection=connection,

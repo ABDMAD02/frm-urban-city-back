@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 # Дефолт для локальной разработки; в проде задаётся через окружение.
 DEFAULT_DATABASE_URL = "postgresql+psycopg://urban:urban@localhost:5432/urban_city"
@@ -50,12 +51,15 @@ def get_engine() -> Engine:
     """Singleton-engine. echo включается переменной SQL_ECHO=1 для отладки."""
     global _engine
     if _engine is None:
-        _engine = create_engine(
-            get_database_url(),
-            echo=os.getenv("SQL_ECHO", "") == "1",
-            pool_pre_ping=True,
-            future=True,
-        )
+        # NullPool лучше с внешним pooler (Supabase); для локального Postgres тоже ок.
+kwargs: dict = {
+    "echo": os.getenv("SQL_ECHO", "") == "1",
+    "pool_pre_ping": True,
+    "future": True,
+    "poolclass": NullPool,
+    "connect_args": {"prepare_threshold": None},
+}
+_engine = create_engine(get_database_url(), **kwargs)
         SessionLocal.configure(bind=_engine)
     return _engine
 
