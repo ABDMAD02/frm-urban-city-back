@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app import store as seed
 from db.enums import (
     AccountStatus,
+    ChecklistValue,
     HistoryType,
     InspectionResult,
     LegalForm,
@@ -36,12 +37,15 @@ def run_seed(session: Session) -> None:
 
     for d in seed.DISTRICTS:
         session.add(m.District(id=d.id, name=d.name))
+    session.flush()
 
     for md in seed.MICRODISTRICTS:
         session.add(m.Microdistrict(id=md.id, district_id=md.districtId, name=md.name))
+    session.flush()
 
     for t_name, t_cat in seed.TYPES:
         session.add(m.ObjectType(name=t_name, category=t_cat))
+    session.flush()  # FK city_object.type → object_type.name
 
     owner_uuid: dict[str, m.Owner] = {}
     for o in seed.OWNERS:
@@ -56,6 +60,7 @@ def run_seed(session: Session) -> None:
         )
         session.add(row)
         owner_uuid[o.id] = row
+    session.flush()
 
     user_uuid: dict[str, m.AppUser] = {}
     for u in seed.USERS:
@@ -79,6 +84,7 @@ def run_seed(session: Session) -> None:
         if u.microdistrictIds:
             for md_id in u.microdistrictIds:
                 session.add(m.UserMicrodistrict(user_id=row.id, microdistrict_id=md_id))
+    session.flush()
 
     object_uuid: dict[str, m.CityObject] = {}
     for o in seed.OBJECTS:
@@ -102,6 +108,7 @@ def run_seed(session: Session) -> None:
         )
         session.add(row)
         object_uuid[o.id] = row
+    session.flush()
 
     photo_uuid: dict[str, m.Photo] = {}
     photo_objects = {"p1": "o5", "p2": "o5", "p3": "o12", "p4": "o1", "p5": "o12", "p6": "o12"}
@@ -111,7 +118,7 @@ def run_seed(session: Session) -> None:
             id=uuid_for_code(p.id),
             code=p.id,
             object_id=object_uuid[oid].id,
-            kind=p.kind,
+            kind=PhotoKind(p.kind.value),
             caption=p.caption,
             color=p.color or None,
             url=p.url,
@@ -129,7 +136,7 @@ def run_seed(session: Session) -> None:
             object_id=object_uuid[insp.objectId].id,
             inspector=insp.inspector,
             date=_parse_date(insp.date),
-            result=insp.result,
+            result=InspectionResult(insp.result.value),
             comment=insp.comment,
         )
         session.add(row)
@@ -140,7 +147,7 @@ def run_seed(session: Session) -> None:
                     inspection_id=row.id,
                     key=item.key,
                     label=item.label,
-                    value=item.value,
+                    value=ChecklistValue(item.value.value),
                     comment=item.comment,
                 )
             )
@@ -160,7 +167,7 @@ def run_seed(session: Session) -> None:
                 issued_at=_parse_date(pr.issuedAt),
                 deadline=_parse_date(pr.deadline),
                 reinspection_date=_parse_date(pr.reinspectionDate),
-                status=pr.status,
+                status=PrescriptionStatus(pr.status.value),
             )
         )
 
@@ -170,7 +177,7 @@ def run_seed(session: Session) -> None:
                 id=uuid_for_code(h.id),
                 code=h.id,
                 object_id=object_uuid[h.objectId].id,
-                type=h.type,
+                type=HistoryType(h.type.value),
                 actor=h.actor,
                 date=_parse_date(h.date),
                 text=h.text,
