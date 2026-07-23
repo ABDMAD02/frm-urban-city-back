@@ -41,16 +41,27 @@ def decode(token: str, expected: str) -> str:
     return payload["sub"]
 
 
+def _demo_user(repo: StoreDep) -> User:
+    admin = repo.find_region_admin()
+    if admin is not None:
+        return admin
+    users = repo.list_users()
+    if users:
+        return users[0]
+    raise HTTPException(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        "База не инициализирована: нет пользователей (запустите seed)",
+    )
+
+
 def get_current_user(
     repo: StoreDep,
     creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ) -> User:
     if creds is None:
-        admin = repo.find_region_admin()
-        return admin or repo.list_users()[0]
+        return _demo_user(repo)
     uid = decode(creds.credentials, "access")
     user = repo.find_user_by_id(uid)
     if user is not None:
         return user
-    admin = repo.find_region_admin()
-    return admin or repo.list_users()[0]
+    return _demo_user(repo)

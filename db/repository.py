@@ -338,7 +338,11 @@ class DbStore:
         uid = self._resolve_uuid(m.AppUser, uid_str)
         if uid is None:
             return None
-        row = self._session.get(m.AppUser, uid)
+        row = self._session.scalar(
+            select(m.AppUser)
+            .where(m.AppUser.id == uid)
+            .options(selectinload(m.AppUser.microdistricts))
+        )
         return self._map_user(row) if row else None
 
     def find_user_by_login(self, login: str) -> User | None:
@@ -350,7 +354,11 @@ class DbStore:
         return self._map_user(row) if row else None
 
     def find_region_admin(self) -> User | None:
-        row = self._session.scalar(select(m.AppUser).where(m.AppUser.role == Role.region_admin))
+        row = self._session.scalar(
+            select(m.AppUser)
+            .where(m.AppUser.role == Role.region_admin)
+            .options(selectinload(m.AppUser.microdistricts))
+        )
         return self._map_user(row) if row else None
 
     def _map_user(self, row: m.AppUser) -> User:
@@ -368,9 +376,8 @@ class DbStore:
         return mappers.user(row, microdistrict_ids=md_ids, owner_object_ids=owner_objs)
 
     def create_user(self, body: CreateUserRequest) -> tuple[User, Credentials]:
-        seed = self.next_id("u").replace("u", "")
+        code = self.next_id("u")
         login = login_for(body.name)
-        code = f"u-{seed}"
         row = m.AppUser(
             id=uuid_for_code(code),
             code=code,
@@ -386,7 +393,9 @@ class DbStore:
         if body.role.value == "urbanist" and body.microdistrictIds:
             for md_id in body.microdistrictIds:
                 self._session.add(m.UserMicrodistrict(user_id=row.id, microdistrict_id=md_id))
-        creds = Credentials(login=login, tempPassword=temp_password(seed))
+            self._session.flush()
+            self._session.refresh(row, attribute_names=["microdistricts"])
+        creds = Credentials(login=login, tempPassword=temp_password(code))
         return self._map_user(row), creds
 
     def update_user(self, uid_str: str, body: UpdateUserRequest) -> tuple[User | None, Credentials | None]:
@@ -459,6 +468,8 @@ class DbStore:
 
     def first_microdistrict(self) -> Microdistrict:
         row = self._session.scalar(select(m.Microdistrict).limit(1))
+        if row is None:
+            raise LookupError("Нет микрорайонов в БД (нужен seed)")
         return mappers.microdistrict(row)
 
     def create_microdistrict(self, body: MicrodistrictCreate) -> Microdistrict:
