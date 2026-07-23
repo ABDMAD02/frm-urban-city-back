@@ -90,9 +90,23 @@ class DbStore:
             return None
 
     def _load_counters(self) -> dict[str, int]:
+        # UUID entities expose public ids via ``code``; district/microdistrict use text PK.
         codes: list[str] = []
-        for model in (m.CityObject, m.Owner, m.AppUser, m.Inspection, m.Prescription, m.Photo, m.HistoryEvent, m.ObjectVersion, m.District, m.Microdistrict):
-            codes.extend(self._session.scalars(select(model.code).where(model.code.is_not(None))).all())
+        for model in (
+            m.CityObject,
+            m.Owner,
+            m.AppUser,
+            m.Inspection,
+            m.Prescription,
+            m.Photo,
+            m.HistoryEvent,
+            m.ObjectVersion,
+        ):
+            codes.extend(
+                self._session.scalars(select(model.code).where(model.code.is_not(None))).all()
+            )
+        codes.extend(self._session.scalars(select(m.District.id)).all())
+        codes.extend(self._session.scalars(select(m.Microdistrict.id)).all())
         counters: dict[str, int] = {}
         for code in codes:
             mch = re.match(r"^([a-z]+)(\d+)$", code)
@@ -328,7 +342,11 @@ class DbStore:
         return self._map_user(row) if row else None
 
     def find_user_by_login(self, login: str) -> User | None:
-        row = self._session.scalar(select(m.AppUser).where(func.lower(m.AppUser.login) == login.lower()))
+        row = self._session.scalar(
+            select(m.AppUser)
+            .where(func.lower(m.AppUser.login) == login.lower())
+            .options(selectinload(m.AppUser.microdistricts))
+        )
         return self._map_user(row) if row else None
 
     def find_region_admin(self) -> User | None:
