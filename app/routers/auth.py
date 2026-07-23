@@ -14,7 +14,14 @@ router = APIRouter(tags=["Аутентификация"])
 def login(body: LoginRequest, repo: StoreDep):
     email_login = body.email.split("@")[0].lower()
     user = repo.find_user_by_login(email_login)
-    user = user or repo.list_users()[0]
+    if user is None:
+        users = repo.list_users()
+        if not users:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "База не инициализирована: нет пользователей (запустите seed)",
+            )
+        user = users[0]
     tokens = security.issue_tokens(user)
     return AuthResponse(user=user, **tokens.model_dump())
 

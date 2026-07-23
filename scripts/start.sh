@@ -10,11 +10,23 @@ from sqlalchemy import inspect, text
 from db.base import get_engine
 
 engine = get_engine()
-tables = set(inspect(engine).get_table_names())
-need = {"owner", "city_object", "app_user", "district", "object_type"}
-missing = sorted(need - tables)
-print(f"Schema check: tables={len(tables)} missing={missing}")
-if not missing:
+insp = inspect(engine)
+tables = set(insp.get_table_names())
+need_tables = {"owner", "city_object", "app_user", "district", "object_type"}
+missing_tables = sorted(need_tables - tables)
+
+# Migration 0002: public API ids live in ``code`` on these tables.
+need_code = ("owner", "app_user", "city_object")
+missing_code = [
+    t for t in need_code
+    if t in tables and "code" not in {c["name"] for c in insp.get_columns(t)}
+]
+
+print(
+    f"Schema check: tables={len(tables)} "
+    f"missing_tables={missing_tables} missing_code={missing_code}"
+)
+if not missing_tables and not missing_code:
     raise SystemExit(0)
 
 print("Schema incomplete — resetting alembic revision and re-applying migrations")

@@ -1,7 +1,7 @@
 """Объекты города: список (в скоупе роли), создание, правка карточки с FSM, поиск, геокодинг."""
 from __future__ import annotations
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .. import config
 from ..deps import StoreDep
@@ -83,5 +83,8 @@ def search(repo: StoreDep, q: str = Query(...), user: User = Depends(get_current
 
 @router.get("/geocode/reverse", response_model=GeocodeResult, summary="Адрес по координатам")
 def reverse_geocode(repo: StoreDep, lat: float = Query(...), lng: float = Query(...)):
-    md = repo.first_microdistrict()
+    try:
+        md = repo.first_microdistrict()
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
     return GeocodeResult(address="—", street="—", districtId=md.districtId, microdistrictId=md.id)
