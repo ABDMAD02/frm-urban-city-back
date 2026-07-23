@@ -19,9 +19,11 @@ from app.enums import (
 from db import models as orm
 
 
-def _d(v: date | datetime | None) -> str:
+def _d(v: date | datetime | str | None) -> str:
     if v is None:
         return ""
+    if isinstance(v, str):
+        return v[:10]
     if isinstance(v, datetime):
         return v.date().isoformat()
     return v.isoformat()
