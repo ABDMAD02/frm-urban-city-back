@@ -51,15 +51,15 @@ def get_engine() -> Engine:
     """Singleton-engine. echo включается переменной SQL_ECHO=1 для отладки."""
     global _engine
     if _engine is None:
-        # NullPool лучше с внешним pooler (Supabase); для локального Postgres тоже ок.
-kwargs: dict = {
-    "echo": os.getenv("SQL_ECHO", "") == "1",
-    "pool_pre_ping": True,
-    "future": True,
-    "poolclass": NullPool,
-    "connect_args": {"prepare_threshold": None},
-}
-_engine = create_engine(get_database_url(), **kwargs)
+        # NullPool + prepare_threshold=None — совместимость с Supabase/PgBouncer.
+        _engine = create_engine(
+            get_database_url(),
+            echo=os.getenv("SQL_ECHO", "") == "1",
+            pool_pre_ping=True,
+            future=True,
+            poolclass=NullPool,
+            connect_args={"prepare_threshold": None},
+        )
         SessionLocal.configure(bind=_engine)
     return _engine
 
