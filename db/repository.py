@@ -316,7 +316,7 @@ class DbStore:
                 "issuedAt": "issued_at", "deadline": "deadline",
                 "reinspectionDate": "reinspection_date",
             }.get(k, k)
-            if attr.endswith("_at") or attr.endswith("_date"):
+            if attr in ("issued_at", "deadline", "reinspection_date"):
                 setattr(row, attr, _parse_date(v) if isinstance(v, str) else v)
             elif attr == "object_id":
                 setattr(row, attr, self._object_uuid(v))
