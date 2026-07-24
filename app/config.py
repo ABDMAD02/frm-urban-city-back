@@ -11,11 +11,8 @@ try:
 except ImportError:
     pass
 
-# Единый префикс API. Рекомендуется /api/v1 (на нём уже мобилка).
+# Единый префикс API.
 API_PREFIX = "/api/v1"
-# Дополнительно монтируем /api для совместимости с текущим веб-клиентом
-# (NEXT_PUBLIC_API_BASE_URL по умолчанию = /api).
-LEGACY_PREFIX = "/api"
 
 ENV = os.getenv("ENV", "development").lower()
 PORT = int(os.getenv("PORT", "8000"))
