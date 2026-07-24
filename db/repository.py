@@ -50,10 +50,19 @@ from app.user_helpers import login_for, temp_password
 
 
 class DbStore:
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, *, region_id: str | None = "uralsk") -> None:
         self._session = session
+        self._region_id = region_id
         mappers.set_owner_code_map(self._owner_code_map())
         self._counters = self._load_counters()
+
+    def set_region(self, region_id: str | None) -> None:
+        self._region_id = region_id
+
+    def _region_filter(self, column):
+        if self._region_id:
+            return column == self._region_id
+        return True
 
     def commit(self) -> None:
         self._session.commit()
@@ -64,7 +73,10 @@ class DbStore:
 
     # ── lookups ───────────────────────────────────────────────────
     def _owner_code_map(self) -> dict[uuid.UUID, str]:
-        rows = self._session.execute(select(m.Owner.id, m.Owner.code))
+        q = select(m.Owner.id, m.Owner.code)
+        if self._region_id:
+            q = q.where(m.Owner.region_id == self._region_id)
+        rows = self._session.execute(q)
         return {r.id: r.code for r in rows if r.code}
 
     def _object_uuid(self, code: str) -> uuid.UUID | None:
@@ -123,7 +135,10 @@ class DbStore:
 
     # ── objects ───────────────────────────────────────────────────
     def list_objects(self) -> list[CityObject]:
-        rows = self._session.scalars(select(m.CityObject)).all()
+        q = select(m.CityObject)
+        if self._region_id:
+            q = q.where(m.CityObject.region_id == self._region_id)
+        rows = self._session.scalars(q).all()
         return [mappers.city_object(r) for r in rows]
 
     def find_object(self, oid: str) -> CityObject | None:
@@ -134,19 +149,26 @@ class DbStore:
         return mappers.city_object(row) if row else None
 
     def create_object(self, body: CreateObjectRequest, actor: User) -> CityObject:
+        region_id = actor.regionId or self._region_id or "uralsk"
+        self._assert_object_limit(region_id)
         code = self.next_id("o")
         owner_uid = self._resolve_uuid(m.Owner, body.ownerId or "w4")
+        # Prefixed geo ids for non-default regions
+        prefix = "" if region_id == "uralsk" else f"{region_id}-"
+        district_id = body.districtId or f"{prefix}d1"
+        microdistrict_id = body.microdistrictId or f"{prefix}m1"
         row = m.CityObject(
             id=uuid_for_code(code),
             code=code,
+            region_id=region_id,
             name=body.name,
             type=body.type,
             category=body.category or "—",
             address=body.address or "—",
             lat=body.lat,
             lng=body.lng,
-            district_id=body.districtId or "d1",
-            microdistrict_id=body.microdistrictId or "m1",
+            district_id=district_id,
+            microdistrict_id=microdistrict_id,
             street=body.street or "—",
             owner_id=owner_uid,
             status=ObjectStatus.new,
@@ -164,6 +186,32 @@ class DbStore:
             )
         )
         return mappers.city_object(row)
+
+    def _assert_object_limit(self, region_id: str) -> None:
+        from db.platform_repository import PlatformStore
+        try:
+            PlatformStore(self._session).check_limits(region_id, objects=True)
+        except OverflowError as exc:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=403,
+                detail={"message": "Лимит объектов подписки исчерпан", "code": str(exc)},
+            ) from exc
+        except LookupError:
+            pass
+
+    def _assert_user_limit(self, region_id: str) -> None:
+        from db.platform_repository import PlatformStore
+        try:
+            PlatformStore(self._session).check_limits(region_id, users=True)
+        except OverflowError as exc:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=403,
+                detail={"message": "Лимит пользователей подписки исчерпан", "code": str(exc)},
+            ) from exc
+        except LookupError:
+            pass
 
     def update_object(self, oid: str, patch: ObjectPatch, note: str | None, actor: str) -> CityObject | None:
         uid = self._object_uuid(oid)
@@ -329,9 +377,12 @@ class DbStore:
 
     # ── users / auth ──────────────────────────────────────────────
     def list_users(self) -> list[User]:
-        rows = self._session.scalars(
-            select(m.AppUser).options(selectinload(m.AppUser.microdistricts))
-        ).all()
+        q = select(m.AppUser).options(selectinload(m.AppUser.microdistricts)).where(
+            m.AppUser.role != Role.platform_superadmin
+        )
+        if self._region_id:
+            q = q.where(m.AppUser.region_id == self._region_id)
+        rows = self._session.scalars(q).all()
         return [self._map_user(r) for r in rows]
 
     def find_user_by_id(self, uid_str: str) -> User | None:
@@ -376,6 +427,8 @@ class DbStore:
         return mappers.user(row, microdistrict_ids=md_ids, owner_object_ids=owner_objs)
 
     def create_user(self, body: CreateUserRequest) -> tuple[User, Credentials]:
+        region_id = self._region_id or "uralsk"
+        self._assert_user_limit(region_id)
         code = self.next_id("u")
         login = login_for(body.name)
         row = m.AppUser(
@@ -386,6 +439,7 @@ class DbStore:
             position=body.position.strip(),
             login=login,
             status=AccountStatus.active,
+            region_id=region_id,
             created_at=_parse_date(config.DEMO_TODAY),
         )
         self._session.add(row)
@@ -419,7 +473,10 @@ class DbStore:
 
     # ── reference ─────────────────────────────────────────────────
     def list_owners(self) -> list[Owner]:
-        return [mappers.owner(r) for r in self._session.scalars(select(m.Owner)).all()]
+        q = select(m.Owner)
+        if self._region_id:
+            q = q.where(m.Owner.region_id == self._region_id)
+        return [mappers.owner(r) for r in self._session.scalars(q).all()]
 
     def find_owner(self, wid: str) -> Owner | None:
         uid = self._resolve_uuid(m.Owner, wid)
@@ -428,13 +485,16 @@ class DbStore:
 
     def create_owner(self, body: CreateOwnerRequest) -> Owner:
         code = self.next_id("w")
-        row = m.Owner(id=uuid_for_code(code), code=code, **{
-            "name": body.name,
-            "legal_form": body.legalForm,
-            "bin": body.bin,
-            "phone": body.phone,
-            "email": body.email,
-        })
+        row = m.Owner(
+            id=uuid_for_code(code),
+            code=code,
+            region_id=self._region_id or "uralsk",
+            name=body.name,
+            legal_form=body.legalForm,
+            bin=body.bin,
+            phone=body.phone,
+            email=body.email,
+        )
         self._session.add(row)
         self._session.flush()
         mappers.set_owner_code_map(self._owner_code_map())
@@ -454,37 +514,69 @@ class DbStore:
         return mappers.owner(row)
 
     def list_districts(self) -> list[District]:
-        return [mappers.district(r) for r in self._session.scalars(select(m.District)).all()]
+        q = select(m.District)
+        if self._region_id:
+            q = q.where(m.District.region_id == self._region_id)
+        return [mappers.district(r) for r in self._session.scalars(q).all()]
 
     def create_district(self, body: DistrictCreate) -> District:
         code = self.next_id("d")
-        row = m.District(id=code, name=body.name)
+        region_id = self._region_id or "uralsk"
+        if region_id != "uralsk":
+            code = f"{region_id}-{code}"
+        row = m.District(id=code, region_id=region_id, name=body.name)
         self._session.add(row)
         self._session.flush()
         return mappers.district(row)
 
     def list_microdistricts(self) -> list[Microdistrict]:
-        return [mappers.microdistrict(r) for r in self._session.scalars(select(m.Microdistrict)).all()]
+        q = select(m.Microdistrict)
+        if self._region_id:
+            q = q.where(m.Microdistrict.region_id == self._region_id)
+        return [mappers.microdistrict(r) for r in self._session.scalars(q).all()]
 
     def first_microdistrict(self) -> Microdistrict:
-        row = self._session.scalar(select(m.Microdistrict).limit(1))
+        q = select(m.Microdistrict)
+        if self._region_id:
+            q = q.where(m.Microdistrict.region_id == self._region_id)
+        row = self._session.scalar(q.limit(1))
         if row is None:
             raise LookupError("Нет микрорайонов в БД (нужен seed)")
         return mappers.microdistrict(row)
 
     def create_microdistrict(self, body: MicrodistrictCreate) -> Microdistrict:
         code = self.next_id("m")
-        row = m.Microdistrict(id=code, district_id=body.districtId, name=body.name)
+        region_id = self._region_id or "uralsk"
+        if region_id != "uralsk":
+            code = f"{region_id}-{code}"
+        row = m.Microdistrict(
+            id=code, region_id=region_id, district_id=body.districtId, name=body.name
+        )
         self._session.add(row)
         self._session.flush()
         return mappers.microdistrict(row)
 
     def list_object_types(self) -> list[str]:
-        return list(self._session.scalars(select(m.ObjectType.name)).all())
+        q = select(m.ObjectType.name)
+        if self._region_id:
+            q = q.where(m.ObjectType.region_id == self._region_id)
+        return list(self._session.scalars(q).all())
 
     def add_object_type(self, type_name: str) -> list[str]:
-        if not self._session.scalar(select(m.ObjectType).where(m.ObjectType.name == type_name)):
-            self._session.add(m.ObjectType(name=type_name))
+        region_id = self._region_id or "uralsk"
+        existing = self._session.scalar(
+            select(m.ObjectType).where(
+                m.ObjectType.name == type_name, m.ObjectType.region_id == region_id
+            )
+        )
+        if not existing:
+            self._session.add(
+                m.ObjectType(
+                    id=uuid_for_code(f"{region_id}:type:{type_name}"),
+                    region_id=region_id,
+                    name=type_name,
+                )
+            )
             self._session.flush()
         return self.list_object_types()
 

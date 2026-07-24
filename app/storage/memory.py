@@ -120,7 +120,8 @@ class MemoryStore:
         return pr
 
     def list_users(self) -> list[User]:
-        return store.USERS
+        from app.enums import Role
+        return [u for u in store.USERS if u.role != Role.platform_superadmin]
 
     def find_user_by_id(self, uid: str) -> User | None:
         return next((u for u in store.USERS if u.id == uid), None)
@@ -129,7 +130,8 @@ class MemoryStore:
         return next((u for u in store.USERS if (u.login or "").lower() == login.lower()), None)
 
     def find_region_admin(self) -> User | None:
-        return next((u for u in store.USERS if u.role.value == "region_admin"), None)
+        from app.enums import Role
+        return next((u for u in store.USERS if u.role == Role.region_admin), None)
 
     def create_user(self, body: CreateUserRequest) -> tuple[User, Credentials]:
         seed = store.next_id("u").replace("u", "")

@@ -37,31 +37,44 @@ def run_seed(session: Session) -> None:
         return
 
     # Справочники — идемпотентно (после прошлых частичных ошибок).
+    region_id = "uralsk"
     existing_districts = set(session.scalars(select(m.District.id)).all())
     for d in seed.DISTRICTS:
         if d.id not in existing_districts:
-            session.add(m.District(id=d.id, name=d.name))
+            session.add(m.District(id=d.id, region_id=region_id, name=d.name))
     session.flush()
 
     existing_mds = set(session.scalars(select(m.Microdistrict.id)).all())
     for md in seed.MICRODISTRICTS:
         if md.id not in existing_mds:
-            session.add(m.Microdistrict(id=md.id, district_id=md.districtId, name=md.name))
+            session.add(
+                m.Microdistrict(
+                    id=md.id, region_id=region_id, district_id=md.districtId, name=md.name
+                )
+            )
     session.flush()
 
-    existing_types = set(session.scalars(select(m.ObjectType.name)).all())
+    existing_types = {
+        row.name
+        for row in session.scalars(
+            select(m.ObjectType).where(m.ObjectType.region_id == region_id)
+        ).all()
+    }
     for t_name, t_cat in seed.TYPES:
         if t_name not in existing_types:
             session.add(
                 m.ObjectType(
                     id=uuid_for_code(f"type:{t_name}"),
+                    region_id=region_id,
                     name=t_name,
                     category=t_cat,
                 )
             )
     session.flush()
 
-    type_names = set(session.scalars(select(m.ObjectType.name)).all())
+    type_names = set(
+        session.scalars(select(m.ObjectType.name).where(m.ObjectType.region_id == region_id)).all()
+    )
     print(f"Seed object_type count={len(type_names)} sample={sorted(type_names)[:5]}")
     if "Магазин" not in type_names:
         raise RuntimeError(
@@ -80,6 +93,7 @@ def run_seed(session: Session) -> None:
         row = m.Owner(
             id=uuid_for_code(o.id),
             code=o.id,
+            region_id=region_id,
             name=o.name,
             legal_form=LegalForm(o.legalForm.value),
             bin=o.bin,
@@ -111,6 +125,7 @@ def run_seed(session: Session) -> None:
             login=u.login,
             status=AccountStatus(u.status.value) if u.status else AccountStatus.active,
             owner_id=owner_id,
+            region_id=region_id,
             created_at=_parse_date(u.createdAt or "2026-05-01"),
         )
         session.add(row)
@@ -127,6 +142,7 @@ def run_seed(session: Session) -> None:
         row = m.CityObject(
             id=uuid_for_code(o.id),
             code=o.id,
+            region_id=region_id,
             name=o.name,
             type=o.type,
             category=o.category,

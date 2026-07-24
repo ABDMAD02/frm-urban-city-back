@@ -12,7 +12,7 @@ from db.base import get_engine
 engine = get_engine()
 insp = inspect(engine)
 tables = set(insp.get_table_names())
-need_tables = {"owner", "city_object", "app_user", "district", "object_type"}
+need_tables = {"owner", "city_object", "app_user", "district", "object_type", "region", "subscription", "plan"}
 missing_tables = sorted(need_tables - tables)
 
 # Migration 0002: public API ids live in ``code`` on these tables.
@@ -21,17 +21,23 @@ missing_code = [
     t for t in need_code
     if t in tables and "code" not in {c["name"] for c in insp.get_columns(t)}
 ]
+missing_region = [
+    t for t in ("district", "city_object", "owner")
+    if t in tables and "region_id" not in {c["name"] for c in insp.get_columns(t)}
+]
 
 print(
     f"Schema check: tables={len(tables)} "
-    f"missing_tables={missing_tables} missing_code={missing_code}"
+    f"missing_tables={missing_tables} missing_code={missing_code} missing_region={missing_region}"
 )
-if not missing_tables and not missing_code:
+if not missing_tables and not missing_code and not missing_region:
     raise SystemExit(0)
 
-print("Schema incomplete — resetting alembic revision and re-applying migrations")
+print("Schema incomplete — resetting public schema and re-applying migrations")
 with engine.begin() as conn:
-    conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+    conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+    conn.execute(text("CREATE SCHEMA public"))
+    conn.execute(text("GRANT ALL ON SCHEMA public TO public"))
 raise SystemExit(2)
 PY
 }

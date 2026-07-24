@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -19,7 +19,7 @@ from sqlalchemy import text
 from . import config
 from .deps import init_database
 from .routers import (
-    auth, objects, inspections, prescriptions, users, reference, analytics, misc,
+    auth, objects, inspections, prescriptions, users, reference, analytics, misc, platform,
 )
 
 
@@ -64,11 +64,19 @@ async def security_headers(request: Request, call_next):
     return response
 
 
-_ROUTERS = [auth, objects, inspections, prescriptions, users, reference, analytics, misc]
+_ROUTERS = [auth, objects, inspections, prescriptions, users, reference, analytics, misc, platform]
 
 for prefix in (config.API_PREFIX, config.LEGACY_PREFIX):
     for module in _ROUTERS:
         app.include_router(module.router, prefix=prefix)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Платформенные ошибки: detail={message,code} → тело {message,code}."""
+    if isinstance(exc.detail, dict) and "message" in exc.detail and "code" in exc.detail:
+        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 @app.get("/", include_in_schema=False)
