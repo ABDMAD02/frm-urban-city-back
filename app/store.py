@@ -37,13 +37,17 @@ USERS = [
     User(id="u1", name="Айгерим Нурланова", role=Role.urbanist,
          position="Главный специалист отдела урбанистики",
          microdistrictIds=["m1", "m2", "m3"], login="a.nurlanova",
-         status=AccountStatus.active, createdAt="2026-05-12"),
+         status=AccountStatus.active, createdAt="2026-05-12", regionId="uralsk"),
     User(id="u2", name="Данияр Сапаров", role=Role.owner, position="ИП «Сапаров»",
          ownerObjectIds=["o5", "o12"], login="d.saparov",
-         status=AccountStatus.active, createdAt="2026-05-20"),
+         status=AccountStatus.active, createdAt="2026-05-20", regionId="uralsk"),
     User(id="u3", name="Асхат Кенжебеков", role=Role.region_admin,
          position="Администратор региона", login="a.kenzhebekov",
-         status=AccountStatus.active, createdAt="2026-05-01"),
+         status=AccountStatus.active, createdAt="2026-05-01", regionId="uralsk"),
+    User(id="sa1", name="Platform Superadmin", role=Role.platform_superadmin,
+         position="Супер-администратор платформы", login="superadmin",
+         email="super@platform.local", status=AccountStatus.active, createdAt="2026-05-01",
+         regionId=None),
 ]
 
 OWNERS = [

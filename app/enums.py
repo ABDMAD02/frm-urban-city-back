@@ -6,6 +6,46 @@ class Role(str, Enum):
     urbanist = "urbanist"
     owner = "owner"
     region_admin = "region_admin"
+    platform_superadmin = "platform_superadmin"
+
+
+class RegionStatus(str, Enum):
+    trial = "trial"
+    active = "active"
+    suspended = "suspended"
+    archived = "archived"
+
+
+class SubscriptionPlan(str, Enum):
+    trial = "trial"
+    standard = "standard"
+    pro = "pro"
+
+
+class SubscriptionStatus(str, Enum):
+    active = "active"
+    grace = "grace"
+    expired = "expired"
+
+
+class Locale(str, Enum):
+    ru = "ru"
+    kk = "kk"
+
+
+class MapProvider(str, Enum):
+    twogis = "2gis"
+    osm = "osm"
+
+
+class PlatformAuditAction(str, Enum):
+    region_provisioned = "region_provisioned"
+    region_suspended = "region_suspended"
+    region_activated = "region_activated"
+    region_archived = "region_archived"
+    subscription_renewed = "subscription_renewed"
+    region_admin_issued = "region_admin_issued"
+    region_admin_reissued = "region_admin_reissued"
 
 
 class AccountStatus(str, Enum):

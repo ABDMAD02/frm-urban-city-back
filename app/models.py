@@ -30,6 +30,8 @@ class User(BaseModel):
     login: str | None = None
     status: AccountStatus | None = None
     createdAt: str | None = None
+    regionId: str | None = None
+    email: str | None = None
 
 
 class Owner(BaseModel):

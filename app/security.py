@@ -15,7 +15,9 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from . import config
 from .deps import StoreDep
+from .enums import Role
 from .models import User, TokenPair
+from .platform_models import AdminUser
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -25,7 +27,7 @@ def _encode(sub: str, kind: str, ttl: timedelta) -> str:
     return jwt.encode(payload, config.JWT_SECRET, algorithm=config.JWT_ALG)
 
 
-def issue_tokens(user: User) -> TokenPair:
+def issue_tokens(user: User | AdminUser) -> TokenPair:
     access = _encode(user.id, "access", timedelta(minutes=config.ACCESS_TTL_MIN))
     refresh = _encode(user.id, "refresh", timedelta(days=config.REFRESH_TTL_DAYS))
     return TokenPair(access_token=access, refresh_token=refresh)
@@ -65,3 +67,26 @@ def get_current_user(
     if user is not None:
         return user
     return _demo_user(repo)
+
+
+def require_platform_token(
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> str:
+    """Возвращает sub из access JWT; без токена — 401 (для /auth/v2/me)."""
+    if creds is None:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail={"message": "Требуется авторизация", "code": "unauthorized"},
+        )
+    return decode(creds.credentials, "access")
+
+
+def user_to_admin(user: User) -> AdminUser | None:
+    if user.role != Role.platform_superadmin:
+        return None
+    return AdminUser(
+        id=user.id,
+        name=user.name,
+        email=user.email or f"{user.login or user.id}@platform.local",
+        role="platform_superadmin",
+    )

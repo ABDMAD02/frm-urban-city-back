@@ -37,10 +37,16 @@ from .enums import (
     HistoryType,
     InspectionResult,
     LegalForm,
+    Locale,
+    MapProvider,
     ObjectStatus,
     PhotoKind,
+    PlatformAuditAction,
     PrescriptionStatus,
+    RegionStatus,
     Role,
+    SubscriptionPlan,
+    SubscriptionStatus,
     enum_values,
 )
 
@@ -65,6 +71,9 @@ class District(Base):
     __tablename__ = "district"
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)  # осмысленный код 'd1'
+    region_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("region.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     name: Mapped[str] = mapped_column(Text, nullable=False)
 
     microdistricts: Mapped[list[Microdistrict]] = relationship(back_populates="district")
@@ -74,12 +83,74 @@ class Microdistrict(Base):
     __tablename__ = "microdistrict"
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)  # 'm1'
+    region_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("region.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     district_id: Mapped[str] = mapped_column(
         Text, ForeignKey("district.id", ondelete="RESTRICT"), nullable=False
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
 
     district: Mapped[District] = relationship(back_populates="microdistricts")
+
+
+# ── Платформа (control plane) ─────────────────────────────────────
+class Region(Base):
+    __tablename__ = "region"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    code: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[RegionStatus] = mapped_column(pg_enum(RegionStatus), nullable=False)
+    timezone: Mapped[str] = mapped_column(Text, nullable=False, server_default="Asia/Oral")
+    locale: Mapped[Locale] = mapped_column(pg_enum(Locale), nullable=False, server_default="ru")
+    map_provider: Mapped[MapProvider] = mapped_column(
+        pg_enum(MapProvider), nullable=False, server_default="2gis"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class Plan(Base):
+    __tablename__ = "plan"
+
+    id: Mapped[SubscriptionPlan] = mapped_column(pg_enum(SubscriptionPlan), primary_key=True)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    max_users: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_objects: Mapped[int] = mapped_column(Integer, nullable=False)
+    price_hint: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+
+
+class Subscription(Base):
+    __tablename__ = "subscription"
+
+    region_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("region.id", ondelete="CASCADE"), primary_key=True
+    )
+    plan: Mapped[SubscriptionPlan] = mapped_column(pg_enum(SubscriptionPlan), nullable=False)
+    status: Mapped[SubscriptionStatus] = mapped_column(
+        pg_enum(SubscriptionStatus), nullable=False, server_default="active"
+    )
+    max_users: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_objects: Mapped[int] = mapped_column(Integer, nullable=False)
+    valid_from: Mapped[date] = mapped_column(Date, nullable=False)
+    valid_until: Mapped[date] = mapped_column(Date, nullable=False)
+
+
+class PlatformAudit(Base):
+    __tablename__ = "platform_audit"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    region_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("region.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    actor: Mapped[str] = mapped_column(Text, nullable=False)
+    action: Mapped[PlatformAuditAction] = mapped_column(pg_enum(PlatformAuditAction), nullable=False)
+    detail: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+    )
 
 
 # ── Собственники ──────────────────────────────────────────────────
@@ -93,6 +164,9 @@ class Owner(Base):
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
+    region_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("region.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     code: Mapped[Optional[str]] = mapped_column(Text, unique=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     legal_form: Mapped[LegalForm] = mapped_column(pg_enum(LegalForm), nullable=False)
@@ -107,9 +181,13 @@ class Owner(Base):
 # ── Справочник типов объектов ─────────────────────────────────────
 class ObjectType(Base):
     __tablename__ = "object_type"
+    __table_args__ = (UniqueConstraint("region_id", "name", name="uq_object_type_region_name"),)
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)  # 'Магазин'
+    region_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("region.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)  # 'Магазин'
     category: Mapped[Optional[str]] = mapped_column(Text)  # 'Торговля'
 
 
@@ -127,9 +205,13 @@ class AppUser(Base):
     role: Mapped[Role] = mapped_column(pg_enum(Role), nullable=False)
     position: Mapped[str] = mapped_column(Text, nullable=False)
     login: Mapped[Optional[str]] = mapped_column(Text, unique=True)
+    email: Mapped[Optional[str]] = mapped_column(Text, unique=True)
     password_hash: Mapped[Optional[str]] = mapped_column(Text)
     status: Mapped[AccountStatus] = mapped_column(
         pg_enum(AccountStatus), nullable=False, server_default="active"
+    )
+    region_id: Mapped[Optional[str]] = mapped_column(
+        Text, ForeignKey("region.id", ondelete="SET NULL"), index=True
     )
     owner_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("owner.id", ondelete="SET NULL")
@@ -170,13 +252,12 @@ class CityObject(Base):
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
+    region_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("region.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     code: Mapped[Optional[str]] = mapped_column(Text, unique=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    type: Mapped[str] = mapped_column(
-        Text,
-        ForeignKey("object_type.name", onupdate="CASCADE", ondelete="RESTRICT"),
-        nullable=False,
-    )
+    type: Mapped[str] = mapped_column(Text, nullable=False)
     category: Mapped[Optional[str]] = mapped_column(Text)  # денорм. из object_type
     address: Mapped[Optional[str]] = mapped_column(Text)
     lat: Mapped[float] = mapped_column(Double, nullable=False)

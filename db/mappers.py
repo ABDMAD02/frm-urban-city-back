@@ -63,6 +63,8 @@ def user(row: orm.AppUser, *, microdistrict_ids: list[str] | None = None, owner_
         login=row.login,
         status=AccountStatus(row.status.value),
         createdAt=_d(row.created_at),
+        regionId=row.region_id,
+        email=row.email,
     )
 
 
