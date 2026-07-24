@@ -4,8 +4,7 @@ Dev:       uvicorn app.main:app --reload
 Production: gunicorn app.main:app -k uvicorn.workers.UvicornWorker (см. scripts/start.sh)
 Swagger:   http://localhost:8000/docs     ·     ReDoc: http://localhost:8000/redoc
 
-Роуты монтируются под /api/v1 (рекомендуемый префикс, на нём мобилка)
-и дублируются под /api (совместимость с текущим веб-клиентом)."""
+Роуты монтируются под /api/v1."""
 from __future__ import annotations
 
 import os
@@ -66,9 +65,8 @@ async def security_headers(request: Request, call_next):
 
 _ROUTERS = [auth, objects, inspections, prescriptions, users, reference, analytics, misc, platform]
 
-for prefix in (config.API_PREFIX, config.LEGACY_PREFIX):
-    for module in _ROUTERS:
-        app.include_router(module.router, prefix=prefix)
+for module in _ROUTERS:
+    app.include_router(module.router, prefix=config.API_PREFIX)
 
 
 @app.exception_handler(HTTPException)

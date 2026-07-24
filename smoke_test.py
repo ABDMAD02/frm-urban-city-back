@@ -38,9 +38,6 @@ check("GET /object-types", "Билборд" in c.get(f"{B}/object-types").json()
 check("GET /analytics/summary", c.get(f"{B}/analytics/summary").json()["total"] == 36)
 check("GET /analytics/status-distribution", isinstance(c.get(f"{B}/analytics/status-distribution").json(), dict))
 
-# legacy-префикс /api тоже работает
-check("legacy GET /api/objects", len(c.get("/api/objects").json()) == 36)
-
 # auth
 login = c.post(f"{B}/auth/v2/login", json={"email": "a.nurlanova@uralsk.kz", "password": "x"})
 check("POST /auth/v2/login", login.status_code == 200 and "access_token" in login.json())
