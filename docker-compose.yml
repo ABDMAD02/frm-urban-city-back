@@ -33,6 +33,12 @@ services:
       RUN_MIGRATIONS: "1"
       SEED_DEMO: "0"
       BOOTSTRAP_PLATFORM: "1"
+      R2_REQUIRED: "0"
+      # R2_ENDPOINT_URL: https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+      # R2_ACCESS_KEY_ID:
+      # R2_SECRET_ACCESS_KEY:
+      # R2_BUCKET: frm-urban-city
+      # R2_PUBLIC_BASE_URL: https://pub-xxxx.r2.dev
       WEB_CONCURRENCY: "2"
     depends_on:
       db:
