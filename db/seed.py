@@ -191,13 +191,45 @@ def run_seed(session: Session) -> None:
     session.flush()
 
     user_uuid: dict[str, m.AppUser] = {}
-    existing_users = {
-        row.code: row
-        for row in session.scalars(select(m.AppUser).where(m.AppUser.code.is_not(None))).all()
+    all_users = list(session.scalars(select(m.AppUser)).all())
+    by_code = {row.code: row for row in all_users if row.code}
+    by_login = {(row.login or "").lower(): row for row in all_users if row.login}
+    by_email = {(row.email or "").lower(): row for row in all_users if row.email}
+
+    def _find_existing_user(u) -> m.AppUser | None:
+        if u.id in by_code:
+            return by_code[u.id]
+        if u.login and u.login.lower() in by_login:
+            return by_login[u.login.lower()]
+        if u.email and u.email.lower() in by_email:
+            return by_email[u.email.lower()]
+        if u.role.value == "platform_superadmin":
+            for row in all_users:
+                if row.role == Role.platform_superadmin:
+                    return row
+        return None
+
+    existing_umds = {
+        (row.user_id, row.microdistrict_id)
+        for row in session.scalars(select(m.UserMicrodistrict)).all()
     }
     for u in seed.USERS:
-        if u.id in existing_users:
-            user_uuid[u.id] = existing_users[u.id]
+        found = _find_existing_user(u)
+        if found is not None:
+            # Align public code/login for users created by migration with a different code.
+            if not found.code:
+                found.code = u.id
+            if u.login and not found.login:
+                found.login = u.login
+            if u.email and not found.email:
+                found.email = u.email
+            if not found.password_hash:
+                found.password_hash = hash_password(
+                    PLATFORM_SUPERADMIN_PASSWORD
+                    if u.role.value == "platform_superadmin"
+                    else temp_password(u.id)
+                )
+            user_uuid[u.id] = found
             continue
         owner_id = None
         if u.role.value == "owner" and u.ownerObjectIds:
@@ -222,13 +254,40 @@ def run_seed(session: Session) -> None:
         )
         session.add(row)
         user_uuid[u.id] = row
+        if u.login:
+            by_login[u.login.lower()] = row
+        if u.email:
+            by_email[u.email.lower()] = row
+        by_code[u.id] = row
         if u.microdistrictIds:
             for md_id in u.microdistrictIds:
+                key = (row.id, md_id)
+                if key not in existing_umds:
+                    session.add(m.UserMicrodistrict(user_id=row.id, microdistrict_id=md_id))
+                    existing_umds.add(key)
+    session.flush()
+
+    # Attach microdistricts for pre-existing users (e.g. after partial seed).
+    for u in seed.USERS:
+        row = user_uuid.get(u.id)
+        if not row or not u.microdistrictIds:
+            continue
+        for md_id in u.microdistrictIds:
+            key = (row.id, md_id)
+            if key not in existing_umds:
                 session.add(m.UserMicrodistrict(user_id=row.id, microdistrict_id=md_id))
+                existing_umds.add(key)
     session.flush()
 
     object_uuid: dict[str, m.CityObject] = {}
+    existing_objects = {
+        row.code: row
+        for row in session.scalars(select(m.CityObject).where(m.CityObject.code.is_not(None))).all()
+    }
     for o in seed.OBJECTS:
+        if o.id in existing_objects:
+            object_uuid[o.id] = existing_objects[o.id]
+            continue
         if o.type not in type_names:
             raise RuntimeError(f"object type {o.type!r} missing before city_object insert")
         row = m.CityObject(
@@ -256,8 +315,15 @@ def run_seed(session: Session) -> None:
     print(f"Seed city_object count={len(object_uuid)}")
 
     photo_uuid: dict[str, m.Photo] = {}
+    existing_photos = {
+        row.code: row
+        for row in session.scalars(select(m.Photo).where(m.Photo.code.is_not(None))).all()
+    }
     photo_objects = {"p1": "o5", "p2": "o5", "p3": "o12", "p4": "o1", "p5": "o12", "p6": "o12"}
     for p in seed.PHOTOS:
+        if p.id in existing_photos:
+            photo_uuid[p.id] = existing_photos[p.id]
+            continue
         oid = photo_objects.get(p.id, "o1")
         row = m.Photo(
             id=uuid_for_code(p.id),
@@ -274,7 +340,14 @@ def run_seed(session: Session) -> None:
         photo_uuid[p.id] = row
 
     inspection_uuid: dict[str, m.Inspection] = {}
+    existing_inspections = {
+        row.code: row
+        for row in session.scalars(select(m.Inspection).where(m.Inspection.code.is_not(None))).all()
+    }
     for insp in seed.INSPECTIONS:
+        if insp.id in existing_inspections:
+            inspection_uuid[insp.id] = existing_inspections[insp.id]
+            continue
         row = m.Inspection(
             id=uuid_for_code(insp.id),
             code=insp.id,
@@ -300,7 +373,13 @@ def run_seed(session: Session) -> None:
             if pid in photo_uuid:
                 photo_uuid[pid].inspection_id = row.id
 
+    existing_prescriptions = {
+        row.code
+        for row in session.scalars(select(m.Prescription).where(m.Prescription.code.is_not(None))).all()
+    }
     for pr in seed.PRESCRIPTIONS:
+        if pr.id in existing_prescriptions:
+            continue
         session.add(
             m.Prescription(
                 id=uuid_for_code(pr.id),
@@ -316,7 +395,13 @@ def run_seed(session: Session) -> None:
             )
         )
 
+    existing_history = {
+        row.code
+        for row in session.scalars(select(m.HistoryEvent).where(m.HistoryEvent.code.is_not(None))).all()
+    }
     for h in seed.HISTORY:
+        if h.id in existing_history:
+            continue
         session.add(
             m.HistoryEvent(
                 id=uuid_for_code(h.id),
@@ -329,7 +414,13 @@ def run_seed(session: Session) -> None:
             )
         )
 
+    existing_versions = {
+        row.code
+        for row in session.scalars(select(m.ObjectVersion).where(m.ObjectVersion.code.is_not(None))).all()
+    }
     for v in seed.VERSIONS:
+        if v.id in existing_versions:
+            continue
         session.add(
             m.ObjectVersion(
                 id=uuid_for_code(v.id),

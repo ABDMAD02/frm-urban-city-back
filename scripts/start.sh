@@ -79,7 +79,9 @@ if [ "${RUN_MIGRATIONS:-0}" = "1" ]; then
         ;;
     esac
     echo "Seeding database (idempotent)..."
-    python -c "from db.seed import run_seed_cli; run_seed_cli()"
+    if ! python -c "from db.seed import run_seed_cli; run_seed_cli()"; then
+      echo "WARN: seed failed; continuing startup (schema is ready)"
+    fi
   else
     echo "RUN_MIGRATIONS=1 but DATABASE_URL is empty — skipping migrations"
   fi
