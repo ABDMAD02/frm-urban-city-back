@@ -10,6 +10,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
+from db.migration_helpers import create_enum_if_not_exists
+
 revision = "0003"
 down_revision = "0002"
 branch_labels = None
@@ -43,20 +45,24 @@ def upgrade() -> None:
         op.execute("ALTER TYPE role_enum ADD VALUE IF NOT EXISTS 'platform_superadmin'")
 
     op.execute(
-        "CREATE TYPE region_status_enum AS ENUM ('trial','active','suspended','archived');"
+        create_enum_if_not_exists(
+            "region_status_enum", "'trial','active','suspended','archived'"
+        )
     )
     op.execute(
-        "CREATE TYPE subscription_plan_enum AS ENUM ('trial','standard','pro');"
+        create_enum_if_not_exists("subscription_plan_enum", "'trial','standard','pro'")
     )
     op.execute(
-        "CREATE TYPE subscription_status_enum AS ENUM ('active','grace','expired');"
+        create_enum_if_not_exists("subscription_status_enum", "'active','grace','expired'")
     )
-    op.execute("CREATE TYPE locale_enum AS ENUM ('ru','kk');")
-    op.execute("CREATE TYPE map_provider_enum AS ENUM ('2gis','osm');")
+    op.execute(create_enum_if_not_exists("locale_enum", "'ru','kk'"))
+    op.execute(create_enum_if_not_exists("map_provider_enum", "'2gis','osm'"))
     op.execute(
-        "CREATE TYPE platform_audit_action_enum AS ENUM ("
-        "'region_provisioned','region_suspended','region_activated','region_archived',"
-        "'subscription_renewed','region_admin_issued','region_admin_reissued');"
+        create_enum_if_not_exists(
+            "platform_audit_action_enum",
+            "'region_provisioned','region_suspended','region_activated','region_archived',"
+            "'subscription_renewed','region_admin_issued','region_admin_reissued'",
+        )
     )
 
     op.create_table(
@@ -120,18 +126,21 @@ def upgrade() -> None:
           ('trial', 'Trial', 10, 50, 'Бесплатно'),
           ('standard', 'Standard', 50, 500, 'По запросу'),
           ('pro', 'Pro', 200, 5000, 'По запросу')
+        ON CONFLICT (id) DO NOTHING
         """
     )
     op.execute(
         """
         INSERT INTO region (id, code, name, status, timezone, locale, map_provider)
         VALUES ('uralsk', 'uralsk', 'Уральск', 'active', 'Asia/Oral', 'ru', '2gis')
+        ON CONFLICT (id) DO NOTHING
         """
     )
     op.execute(
         """
         INSERT INTO subscription (region_id, plan, status, max_users, max_objects, valid_from, valid_until)
         VALUES ('uralsk', 'standard', 'active', 50, 500, CURRENT_DATE, CURRENT_DATE + INTERVAL '1 year')
+        ON CONFLICT (region_id) DO NOTHING
         """
     )
 
