@@ -20,15 +20,11 @@ from db.enums import (
     HistoryType,
     InspectionResult,
     LegalForm,
-    Locale,
-    MapProvider,
     ObjectStatus,
     PhotoKind,
     PrescriptionStatus,
-    RegionStatus,
     Role,
     SubscriptionPlan,
-    SubscriptionStatus,
 )
 from db.codes import uuid_for_code
 from db import models as m
