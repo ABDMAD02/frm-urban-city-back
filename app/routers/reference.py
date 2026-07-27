@@ -77,10 +77,45 @@ async def upload_photo(
     objectId: Optional[str] = Form(None),
     user: User = Depends(get_current_user),
 ):
-    await file.read()
+    from app.storage.object_store import R2NotConfiguredError, r2_configured, upload_bytes
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, detail={"message": "Пустой файл", "code": "empty_file"})
+
+    if r2_configured():
+        try:
+            url = upload_bytes(
+                data,
+                filename=file.filename,
+                content_type=file.content_type,
+                object_id=objectId,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, detail={"message": str(exc), "code": "invalid_upload"}) from exc
+        except R2NotConfiguredError as exc:
+            raise HTTPException(503, detail={"message": str(exc), "code": "storage_unavailable"}) from exc
+        except Exception as exc:
+            raise HTTPException(
+                502,
+                detail={"message": f"R2 upload failed: {exc}", "code": "storage_upload_failed"},
+            ) from exc
+    elif config.ENV == "production":
+        raise HTTPException(
+            503,
+            detail={"message": "R2 storage is not configured", "code": "storage_unavailable"},
+        )
+    else:
+        # Local/dev fallback without R2 credentials.
+        url = f"/media/{file.filename or 'photo.bin'}"
+
     photo = Photo(
-        id="", kind=kind, caption=caption,
-        url=f"/media/{file.filename}", date=config.DEMO_TODAY, author=user.name,
+        id="",
+        kind=kind,
+        caption=caption,
+        url=url,
+        date=config.DEMO_TODAY,
+        author=user.name,
     )
     return repo.add_photo_if_missing(photo, object_id=objectId)
 

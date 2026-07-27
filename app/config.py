@@ -32,6 +32,24 @@ CORS_ORIGINS = [
 # В демо даты заморожены — как в прототипе фронта.
 DEMO_TODAY = os.getenv("DEMO_TODAY", "2026-07-02")
 
+# Cloudflare R2 (S3-compatible). Bucket: frm-urban-city
+R2_ENDPOINT_URL = os.getenv("R2_ENDPOINT_URL", "").strip()
+R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "").strip()
+R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "").strip()
+R2_BUCKET = os.getenv("R2_BUCKET", "frm-urban-city").strip()
+R2_REGION = os.getenv("R2_REGION", "auto").strip() or "auto"
+# Public base for stored photo.url, e.g. https://pub-xxxx.r2.dev or custom domain.
+R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL", "").strip()
+# Optional Cloudflare API token (not required for S3 put_object).
+R2_API_TOKEN = os.getenv("R2_API_TOKEN", "").strip()
+R2_MAX_UPLOAD_BYTES = int(os.getenv("R2_MAX_UPLOAD_BYTES", str(15 * 1024 * 1024)))
+R2_CACHE_CONTROL = os.getenv("R2_CACHE_CONTROL", "public, max-age=31536000, immutable").strip()
+_R2_ALLOWED = os.getenv(
+    "R2_ALLOWED_CONTENT_TYPES",
+    "image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif",
+)
+R2_ALLOWED_CONTENT_TYPES = {t.strip() for t in _R2_ALLOWED.split(",") if t.strip()}
+
 # PostgreSQL: USE_DB=1 или auto (DATABASE_URL задан в production).
 _USE_DB = os.getenv("USE_DB", "auto").lower()
 
@@ -57,3 +75,21 @@ def validate_production_settings() -> None:
         )
     if not CORS_ORIGINS:
         raise RuntimeError("CORS_ORIGINS must be set in production")
+    # Photo uploads require R2 in production (optional only if explicitly disabled).
+    require_r2 = os.getenv("R2_REQUIRED", "0").lower() in ("1", "true", "yes")
+    if require_r2:
+        missing = [
+            name
+            for name, val in (
+                ("R2_ENDPOINT_URL", R2_ENDPOINT_URL),
+                ("R2_ACCESS_KEY_ID", R2_ACCESS_KEY_ID),
+                ("R2_SECRET_ACCESS_KEY", R2_SECRET_ACCESS_KEY),
+                ("R2_BUCKET", R2_BUCKET),
+                ("R2_PUBLIC_BASE_URL", R2_PUBLIC_BASE_URL),
+            )
+            if not val
+        ]
+        if missing:
+            raise RuntimeError(
+                "Cloudflare R2 is required in production; missing: " + ", ".join(missing)
+            )
