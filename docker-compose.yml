@@ -31,6 +31,8 @@ services:
       DATABASE_URL: postgresql+psycopg://urban:urban@db:5432/urban_city
       USE_DB: "1"
       RUN_MIGRATIONS: "1"
+      SEED_DEMO: "0"
+      BOOTSTRAP_PLATFORM: "1"
       WEB_CONCURRENCY: "2"
     depends_on:
       db:

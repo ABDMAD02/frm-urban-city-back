@@ -4,6 +4,21 @@ set -e
 PORT="${PORT:-8080}"
 WORKERS="${WEB_CONCURRENCY:-2}"
 
+reset_public_schema() {
+  echo "RESET_DB=1 — dropping public schema for a clean database..."
+  python - <<'PY'
+from sqlalchemy import text
+from db.base import get_engine
+
+engine = get_engine()
+with engine.begin() as conn:
+    conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+    conn.execute(text("CREATE SCHEMA public"))
+    conn.execute(text("GRANT ALL ON SCHEMA public TO public"))
+print("Public schema recreated")
+PY
+}
+
 ensure_schema() {
   python - <<'PY'
 from sqlalchemy import inspect, text
@@ -56,6 +71,10 @@ PY
 
 if [ "${RUN_MIGRATIONS:-0}" = "1" ]; then
   if [ -n "${DATABASE_URL:-}" ]; then
+    if [ "${RESET_DB:-0}" = "1" ]; then
+      reset_public_schema
+    fi
+
     echo "Running alembic migrations..."
     alembic upgrade head || echo "WARN: alembic upgrade head failed; checking schema..."
     set +e
@@ -78,9 +97,23 @@ if [ "${RUN_MIGRATIONS:-0}" = "1" ]; then
         exit 1
         ;;
     esac
-    echo "Seeding database (idempotent)..."
-    if ! python -c "from db.seed import run_seed_cli; run_seed_cli()"; then
-      echo "WARN: seed failed; continuing startup (schema is ready)"
+
+    # Minimal platform account only (no demo city data). Default: on.
+    if [ "${BOOTSTRAP_PLATFORM:-1}" = "1" ]; then
+      echo "Bootstrapping platform superadmin (no demo seed)..."
+      python -c "from db.seed import run_platform_bootstrap_cli; run_platform_bootstrap_cli()"
+    else
+      echo "BOOTSTRAP_PLATFORM=0 — skipping platform bootstrap"
+    fi
+
+    # Full demo dataset (districts/objects/users). Default: off.
+    if [ "${SEED_DEMO:-0}" = "1" ]; then
+      echo "SEED_DEMO=1 — seeding demo dataset..."
+      if ! python -c "from db.seed import run_seed_cli; run_seed_cli()"; then
+        echo "WARN: demo seed failed; continuing startup (schema is ready)"
+      fi
+    else
+      echo "SEED_DEMO=0 — leaving tenant tables empty"
     fi
   else
     echo "RUN_MIGRATIONS=1 but DATABASE_URL is empty — skipping migrations"

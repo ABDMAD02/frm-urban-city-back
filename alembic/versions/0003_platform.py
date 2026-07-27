@@ -119,7 +119,7 @@ def upgrade() -> None:
     op.create_index("ix_platform_audit_region_id", "platform_audit", ["region_id"])
     op.create_index("ix_platform_audit_at", "platform_audit", ["at"])
 
-    # Seed plans + default region before backfill.
+    # Plan catalog only — no demo region/users/objects on a fresh DB.
     op.execute(
         """
         INSERT INTO plan (id, label, max_users, max_objects, price_hint) VALUES
@@ -129,17 +129,30 @@ def upgrade() -> None:
         ON CONFLICT (id) DO NOTHING
         """
     )
+    # Default region only when upgrading a DB that already has tenant rows to backfill.
     op.execute(
         """
         INSERT INTO region (id, code, name, status, timezone, locale, map_provider)
-        VALUES ('uralsk', 'uralsk', 'Уральск', 'active', 'Asia/Oral', 'ru', '2gis')
+        SELECT 'uralsk', 'uralsk', 'Уральск', 'active', 'Asia/Oral', 'ru', '2gis'
+        WHERE EXISTS (SELECT 1 FROM district LIMIT 1)
+           OR EXISTS (SELECT 1 FROM microdistrict LIMIT 1)
+           OR EXISTS (SELECT 1 FROM owner LIMIT 1)
+           OR EXISTS (SELECT 1 FROM object_type LIMIT 1)
+           OR EXISTS (SELECT 1 FROM city_object LIMIT 1)
+           OR EXISTS (
+                SELECT 1 FROM app_user
+                WHERE role::text <> 'platform_superadmin'
+                LIMIT 1
+           )
         ON CONFLICT (id) DO NOTHING
         """
     )
     op.execute(
         """
         INSERT INTO subscription (region_id, plan, status, max_users, max_objects, valid_from, valid_until)
-        VALUES ('uralsk', 'standard', 'active', 50, 500, CURRENT_DATE, CURRENT_DATE + INTERVAL '1 year')
+        SELECT 'uralsk', 'standard', 'active', 50, 500,
+               CURRENT_DATE, CURRENT_DATE + INTERVAL '1 year'
+        WHERE EXISTS (SELECT 1 FROM region WHERE id = 'uralsk')
         ON CONFLICT (region_id) DO NOTHING
         """
     )
@@ -159,7 +172,26 @@ def upgrade() -> None:
     op.execute("UPDATE city_object SET region_id = 'uralsk' WHERE region_id IS NULL")
     op.execute(
         "UPDATE app_user SET region_id = 'uralsk' "
-        "WHERE role <> 'platform_superadmin' AND region_id IS NULL"
+        "WHERE role::text <> 'platform_superadmin' AND region_id IS NULL"
+    )
+
+    # Empty tenant tables stay empty; NOT NULL is fine with zero rows.
+    # If rows exist without a region (should not happen after conditional insert), fail loudly.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM district WHERE region_id IS NULL
+            UNION ALL SELECT 1 FROM microdistrict WHERE region_id IS NULL
+            UNION ALL SELECT 1 FROM owner WHERE region_id IS NULL
+            UNION ALL SELECT 1 FROM object_type WHERE region_id IS NULL
+            UNION ALL SELECT 1 FROM city_object WHERE region_id IS NULL
+          ) THEN
+            RAISE EXCEPTION 'region backfill failed: tenant rows without region_id';
+          END IF;
+        END $$;
+        """
     )
 
     op.alter_column("district", "region_id", nullable=False)
@@ -188,46 +220,7 @@ def upgrade() -> None:
     op.drop_constraint("object_type_name_key", "object_type", type_="unique")
     op.create_unique_constraint("uq_object_type_region_name", "object_type", ["region_id", "name"])
 
-    # Seed platform superadmin (demo credentials).
-    from app.passwords import hash_password
-    from app.user_helpers import (
-        PLATFORM_SUPERADMIN_EMAIL,
-        PLATFORM_SUPERADMIN_LOGIN,
-        PLATFORM_SUPERADMIN_PASSWORD,
-    )
-
-    pwd_hash = hash_password(PLATFORM_SUPERADMIN_PASSWORD)
-    op.execute(
-        sa.text(
-            """
-            INSERT INTO app_user (
-              id, code, name, role, position, login, email, password_hash,
-              status, region_id, created_at, version
-            )
-            SELECT
-              gen_random_uuid(),
-              'sa1',
-              'Platform Superadmin',
-              'platform_superadmin',
-              'Супер-администратор платформы',
-              :login,
-              :email,
-              :pwd_hash,
-              'active',
-              NULL,
-              now(),
-              1
-            WHERE NOT EXISTS (
-              SELECT 1 FROM app_user
-              WHERE login = :login OR email = :email OR code = 'sa1'
-            )
-            """
-        ).bindparams(
-            login=PLATFORM_SUPERADMIN_LOGIN,
-            email=PLATFORM_SUPERADMIN_EMAIL,
-            pwd_hash=pwd_hash,
-        )
-    )
+    # Platform superadmin is optional — created by BOOTSTRAP_PLATFORM=1 at startup, not by migration.
 
 
 def downgrade() -> None:

@@ -63,8 +63,7 @@ def _backfill_password_hashes(session: Session) -> None:
 DEFAULT_REGION_ID = "uralsk"
 
 
-def _ensure_platform_bootstrap(session: Session, region_id: str = DEFAULT_REGION_ID) -> None:
-    """Plans + default region/subscription (идемпотентно после частичных деплоев)."""
+def _ensure_plans(session: Session) -> None:
     plans = (
         (SubscriptionPlan.trial, "Trial", 10, 50, "Бесплатно"),
         (SubscriptionPlan.standard, "Standard", 50, 500, "По запросу"),
@@ -82,6 +81,52 @@ def _ensure_platform_bootstrap(session: Session, region_id: str = DEFAULT_REGION
                     price_hint=price_hint,
                 )
             )
+    session.flush()
+
+
+def _ensure_platform_superadmin(session: Session) -> None:
+    """One platform login account; does not create regions or demo data."""
+    existing = session.scalar(
+        select(m.AppUser).where(
+            (m.AppUser.login == PLATFORM_SUPERADMIN_LOGIN)
+            | (m.AppUser.email == PLATFORM_SUPERADMIN_EMAIL)
+            | (m.AppUser.code == "sa1")
+            | (m.AppUser.role == Role.platform_superadmin)
+        )
+    )
+    if existing is not None:
+        if not existing.password_hash:
+            existing.password_hash = hash_password(PLATFORM_SUPERADMIN_PASSWORD)
+        if not existing.login:
+            existing.login = PLATFORM_SUPERADMIN_LOGIN
+        if not existing.email:
+            existing.email = PLATFORM_SUPERADMIN_EMAIL
+        session.flush()
+        print("Platform superadmin already present")
+        return
+
+    session.add(
+        m.AppUser(
+            id=uuid_for_code("sa1"),
+            code="sa1",
+            name="Platform Superadmin",
+            role=Role.platform_superadmin,
+            position="Супер-администратор платформы",
+            login=PLATFORM_SUPERADMIN_LOGIN,
+            email=PLATFORM_SUPERADMIN_EMAIL,
+            password_hash=hash_password(PLATFORM_SUPERADMIN_PASSWORD),
+            status=AccountStatus.active,
+            region_id=None,
+            created_at=_parse_date("2026-05-01"),
+        )
+    )
+    session.flush()
+    print(f"Created platform superadmin login={PLATFORM_SUPERADMIN_LOGIN}")
+
+
+def _ensure_platform_bootstrap(session: Session, region_id: str = DEFAULT_REGION_ID) -> None:
+    """Plans + default region/subscription — only for demo seed path."""
+    _ensure_plans(session)
 
     region = session.get(m.Region, region_id)
     if region is None:
@@ -115,9 +160,27 @@ def _ensure_platform_bootstrap(session: Session, region_id: str = DEFAULT_REGION
     session.flush()
 
 
+def run_platform_bootstrap(session: Session) -> None:
+    """Minimal bootstrap: plan catalog + platform superadmin. Tenant tables stay empty."""
+    _backfill_password_hashes(session)
+    _ensure_plans(session)
+    _ensure_platform_superadmin(session)
+
+
+def run_platform_bootstrap_cli() -> None:
+    from db.base import SessionLocal, get_engine
+
+    get_engine()
+    with SessionLocal() as session:
+        run_platform_bootstrap(session)
+        session.commit()
+        print("Platform bootstrap completed.")
+
+
 def run_seed(session: Session) -> None:
     _backfill_password_hashes(session)
     _ensure_platform_bootstrap(session)
+    _ensure_platform_superadmin(session)
     if is_seeded(session):
         print("Seed skipped: city_object already has rows")
         return
