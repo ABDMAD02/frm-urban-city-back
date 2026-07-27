@@ -34,3 +34,9 @@ def login_for(name: str) -> str:
 def temp_password(seed: str) -> str:
     tail = re.sub(r"\D", "", seed)[-4:].rjust(4, "0")
     return f"UC-{tail}-{seed[-2:].rjust(2, '0')}"
+
+
+# Демо-пароль супер-админа (seed / SQL). Смените в проде.
+PLATFORM_SUPERADMIN_PASSWORD = "Urb4n-SA-2026!"
+PLATFORM_SUPERADMIN_LOGIN = "platform.admin"
+PLATFORM_SUPERADMIN_EMAIL = "platform.admin@urban-city.kz"

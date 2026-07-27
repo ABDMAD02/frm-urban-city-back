@@ -7,6 +7,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import store as seed
+from app.passwords import hash_password
+from app.user_helpers import (
+    PLATFORM_SUPERADMIN_EMAIL,
+    PLATFORM_SUPERADMIN_LOGIN,
+    PLATFORM_SUPERADMIN_PASSWORD,
+    temp_password,
+)
 from db.enums import (
     AccountStatus,
     ChecklistValue,
@@ -31,7 +38,25 @@ def is_seeded(session: Session) -> bool:
     return session.scalar(select(func.count()).select_from(m.CityObject)) > 0
 
 
+def _backfill_password_hashes(session: Session) -> None:
+    """Проставить password_hash пользователям без хеша (идемпотентно)."""
+    rows = session.scalars(select(m.AppUser).where(m.AppUser.password_hash.is_(None))).all()
+    for row in rows:
+        if row.role == Role.platform_superadmin:
+            row.password_hash = hash_password(PLATFORM_SUPERADMIN_PASSWORD)
+            if not row.login:
+                row.login = PLATFORM_SUPERADMIN_LOGIN
+            if not row.email:
+                row.email = PLATFORM_SUPERADMIN_EMAIL
+        elif row.code:
+            row.password_hash = hash_password(temp_password(row.code))
+    if rows:
+        session.flush()
+        print(f"Backfilled password_hash for {len(rows)} users")
+
+
 def run_seed(session: Session) -> None:
+    _backfill_password_hashes(session)
     if is_seeded(session):
         print("Seed skipped: city_object already has rows")
         return
@@ -123,9 +148,15 @@ def run_seed(session: Session) -> None:
             role=Role(u.role.value),
             position=u.position,
             login=u.login,
+            email=u.email,
+            password_hash=hash_password(
+                PLATFORM_SUPERADMIN_PASSWORD
+                if u.role.value == "platform_superadmin"
+                else temp_password(u.id)
+            ),
             status=AccountStatus(u.status.value) if u.status else AccountStatus.active,
             owner_id=owner_id,
-            region_id=region_id,
+            region_id=None if u.role.value == "platform_superadmin" else region_id,
             created_at=_parse_date(u.createdAt or "2026-05-01"),
         )
         session.add(row)

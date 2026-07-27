@@ -27,6 +27,17 @@ from app.user_helpers import login_for, temp_password
 
 
 class MemoryStore:
+    def __init__(self) -> None:
+        from app.passwords import hash_password
+        from app.user_helpers import PLATFORM_SUPERADMIN_PASSWORD, temp_password
+
+        self._password_hashes: dict[str, str] = {}
+        for u in store.USERS:
+            if u.role.value == "platform_superadmin":
+                self._password_hashes[u.id] = hash_password(PLATFORM_SUPERADMIN_PASSWORD)
+            else:
+                self._password_hashes[u.id] = hash_password(temp_password(u.id))
+
     def commit(self) -> None:
         pass
 
@@ -133,18 +144,49 @@ class MemoryStore:
         from app.enums import Role
         return next((u for u in store.USERS if u.role == Role.region_admin), None)
 
+    def authenticate_lookup(self, email_or_login: str) -> tuple[User | None, str | None]:
+        key = email_or_login.strip().lower()
+        login = key.split("@")[0]
+        user = next(
+            (
+                u
+                for u in store.USERS
+                if (u.login or "").lower() == login
+                or (u.email or "").lower() == key
+            ),
+            None,
+        )
+        if user is None:
+            return None, None
+        return user, self._password_hashes.get(user.id)
+
+    def set_password(self, uid_str: str, password: str) -> bool:
+        from app.passwords import hash_password
+
+        user = self.find_user_by_id(uid_str)
+        if user is None:
+            return False
+        self._password_hashes[user.id] = hash_password(password)
+        return True
+
     def create_user(self, body: CreateUserRequest) -> tuple[User, Credentials]:
-        seed = store.next_id("u").replace("u", "")
+        from app.passwords import hash_password
+
+        code = store.next_id("u")
         login = login_for(body.name)
+        plain = temp_password(code)
         new = User(
-            id=f"u-{seed}", name=body.name.strip(), role=body.role, position=body.position.strip(),
+            id=code, name=body.name.strip(), role=body.role, position=body.position.strip(),
             microdistrictIds=body.microdistrictIds if body.role.value == "urbanist" else None,
             login=login, status="active", createdAt=config.DEMO_TODAY,
         )
         store.USERS.append(new)
-        return new, Credentials(login=login, tempPassword=temp_password(seed))
+        self._password_hashes[new.id] = hash_password(plain)
+        return new, Credentials(login=login, tempPassword=plain)
 
     def update_user(self, uid: str, body: UpdateUserRequest) -> tuple[User | None, Credentials | None]:
+        from app.passwords import hash_password
+
         user = self.find_user_by_id(uid)
         if user is None:
             return None, None
@@ -155,7 +197,9 @@ class MemoryStore:
             user.microdistrictIds = body.microdistrictIds
         if body.resetPassword:
             user.status = "active"
-            creds = Credentials(login=user.login or "", tempPassword=temp_password(uid))
+            plain = temp_password(uid)
+            self._password_hashes[user.id] = hash_password(plain)
+            creds = Credentials(login=user.login or "", tempPassword=plain)
         return user, creds
 
     def list_owners(self) -> list[Owner]:
