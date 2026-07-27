@@ -9,6 +9,7 @@ ensure_schema() {
 from sqlalchemy import inspect, text
 from db.base import get_engine
 
+HEAD_REVISION = "0003"
 engine = get_engine()
 insp = inspect(engine)
 tables = set(insp.get_table_names())
@@ -26,32 +27,57 @@ missing_region = [
     if t in tables and "region_id" not in {c["name"] for c in insp.get_columns(t)}
 ]
 
+alembic_version = None
+if "alembic_version" in tables:
+    with engine.connect() as conn:
+        alembic_version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+
 print(
     f"Schema check: tables={len(tables)} "
-    f"missing_tables={missing_tables} missing_code={missing_code} missing_region={missing_region}"
+    f"missing_tables={missing_tables} missing_code={missing_code} "
+    f"missing_region={missing_region} alembic_version={alembic_version!r}"
 )
-if not missing_tables and not missing_code and not missing_region:
-    raise SystemExit(0)
 
-print("Schema incomplete — resetting public schema and re-applying migrations")
-with engine.begin() as conn:
-    conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
-    conn.execute(text("CREATE SCHEMA public"))
-    conn.execute(text("GRANT ALL ON SCHEMA public TO public"))
-raise SystemExit(2)
+if missing_tables or missing_code or missing_region:
+    print("Schema incomplete — resetting public schema and re-applying migrations")
+    with engine.begin() as conn:
+        conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+        conn.execute(text("CREATE SCHEMA public"))
+        conn.execute(text("GRANT ALL ON SCHEMA public TO public"))
+    raise SystemExit(2)
+
+if alembic_version != HEAD_REVISION:
+    print(f"Alembic version {alembic_version!r} != head {HEAD_REVISION!r} — stamping head")
+    raise SystemExit(3)
+
+raise SystemExit(0)
 PY
 }
 
 if [ "${RUN_MIGRATIONS:-0}" = "1" ]; then
   if [ -n "${DATABASE_URL:-}" ]; then
     echo "Running alembic migrations..."
-    # First attempt may no-op if alembic_version is stamped but tables were dropped.
     alembic upgrade head || echo "WARN: alembic upgrade head failed; checking schema..."
-    if ! ensure_schema; then
-      echo "Re-running alembic upgrade head after schema reset..."
-      alembic upgrade head
-      ensure_schema
-    fi
+    set +e
+    ensure_schema
+    schema_status=$?
+    set -e
+    case $schema_status in
+      0) ;;
+      2)
+        echo "Re-running alembic upgrade head after schema reset..."
+        alembic upgrade head
+        ensure_schema
+        ;;
+      3)
+        alembic stamp head
+        ensure_schema
+        ;;
+      *)
+        echo "Schema check failed with unexpected code"
+        exit 1
+        ;;
+    esac
     echo "Seeding database (idempotent)..."
     python -c "from db.seed import run_seed_cli; run_seed_cli()"
   else

@@ -1,7 +1,7 @@
 """Загрузка сид-данных из app/store.py в PostgreSQL (идемпотентно)."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -20,10 +20,15 @@ from db.enums import (
     HistoryType,
     InspectionResult,
     LegalForm,
+    Locale,
+    MapProvider,
     ObjectStatus,
     PhotoKind,
     PrescriptionStatus,
+    RegionStatus,
     Role,
+    SubscriptionPlan,
+    SubscriptionStatus,
 )
 from db.codes import uuid_for_code
 from db import models as m
@@ -55,14 +60,70 @@ def _backfill_password_hashes(session: Session) -> None:
         print(f"Backfilled password_hash for {len(rows)} users")
 
 
+DEFAULT_REGION_ID = "uralsk"
+
+
+def _ensure_platform_bootstrap(session: Session, region_id: str = DEFAULT_REGION_ID) -> None:
+    """Plans + default region/subscription (идемпотентно после частичных деплоев)."""
+    plans = (
+        (SubscriptionPlan.trial, "Trial", 10, 50, "Бесплатно"),
+        (SubscriptionPlan.standard, "Standard", 50, 500, "По запросу"),
+        (SubscriptionPlan.pro, "Pro", 200, 5000, "По запросу"),
+    )
+    existing_plans = set(session.scalars(select(m.Plan.id)).all())
+    for plan_id, label, max_users, max_objects, price_hint in plans:
+        if plan_id not in existing_plans:
+            session.add(
+                m.Plan(
+                    id=plan_id,
+                    label=label,
+                    max_users=max_users,
+                    max_objects=max_objects,
+                    price_hint=price_hint,
+                )
+            )
+
+    region = session.get(m.Region, region_id)
+    if region is None:
+        session.add(
+            m.Region(
+                id=region_id,
+                code=region_id,
+                name="Уральск",
+                status=RegionStatus.active,
+                timezone="Asia/Oral",
+                locale=Locale.ru,
+                map_provider=MapProvider.twogis,
+            )
+        )
+        session.flush()
+
+    sub = session.get(m.Subscription, region_id)
+    if sub is None:
+        today = date.today()
+        session.add(
+            m.Subscription(
+                region_id=region_id,
+                plan=SubscriptionPlan.standard,
+                status=SubscriptionStatus.active,
+                max_users=50,
+                max_objects=500,
+                valid_from=today,
+                valid_until=today + timedelta(days=365),
+            )
+        )
+    session.flush()
+
+
 def run_seed(session: Session) -> None:
     _backfill_password_hashes(session)
+    _ensure_platform_bootstrap(session)
     if is_seeded(session):
         print("Seed skipped: city_object already has rows")
         return
 
     # Справочники — идемпотентно (после прошлых частичных ошибок).
-    region_id = "uralsk"
+    region_id = DEFAULT_REGION_ID
     existing_districts = set(session.scalars(select(m.District.id)).all())
     for d in seed.DISTRICTS:
         if d.id not in existing_districts:

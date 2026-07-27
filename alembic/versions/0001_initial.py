@@ -14,6 +14,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
+from db.migration_helpers import create_enum_if_not_exists
+
 # идентификаторы ревизии
 revision = "0001"
 down_revision = None
@@ -53,37 +55,35 @@ def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS btree_gin;")  # составные GIN (опционально)
 
     # ── (1) ENUM-типы (зеркало app/enums.py) ──────────────────────
+    op.execute(create_enum_if_not_exists("role_enum", "'urbanist','owner','region_admin'"))
+    op.execute(create_enum_if_not_exists("account_status_enum", "'active','blocked'"))
     op.execute(
-        "CREATE TYPE role_enum AS ENUM ('urbanist','owner','region_admin');"
+        create_enum_if_not_exists(
+            "object_status_enum",
+            "'new','not_inspected','compliant','has_remarks','prescription_issued',"
+            "'awaiting_reinspection','violation_fixed','closed','archived'",
+        )
     )
     op.execute(
-        "CREATE TYPE account_status_enum AS ENUM ('active','blocked');"
+        create_enum_if_not_exists("inspection_result_enum", "'compliant','has_remarks'")
     )
     op.execute(
-        "CREATE TYPE object_status_enum AS ENUM ("
-        "'new','not_inspected','compliant','has_remarks','prescription_issued',"
-        "'awaiting_reinspection','violation_fixed','closed','archived');"
+        create_enum_if_not_exists(
+            "prescription_status_enum", "'open','overdue','fixed','closed'"
+        )
     )
     op.execute(
-        "CREATE TYPE inspection_result_enum AS ENUM ('compliant','has_remarks');"
+        create_enum_if_not_exists("legal_form_enum", "'ИП','ТОО','Физлицо','Госорган'")
     )
+    op.execute(create_enum_if_not_exists("checklist_value_enum", "'ok','issue','na'"))
+    op.execute(create_enum_if_not_exists("photo_kind_enum", "'before','after','general'"))
     op.execute(
-        "CREATE TYPE prescription_status_enum AS ENUM ('open','overdue','fixed','closed');"
-    )
-    op.execute(
-        "CREATE TYPE legal_form_enum AS ENUM ('ИП','ТОО','Физлицо','Госорган');"
-    )
-    op.execute(
-        "CREATE TYPE checklist_value_enum AS ENUM ('ok','issue','na');"
-    )
-    op.execute(
-        "CREATE TYPE photo_kind_enum AS ENUM ('before','after','general');"
-    )
-    op.execute(
-        "CREATE TYPE history_type_enum AS ENUM ("
-        "'object_created','card_updated','owner_changed','inspection_done',"
-        "'prescription_issued','photos_uploaded','violation_fixed','reinspection',"
-        "'status_changed','archived');"
+        create_enum_if_not_exists(
+            "history_type_enum",
+            "'object_created','card_updated','owner_changed','inspection_done',"
+            "'prescription_issued','photos_uploaded','violation_fixed','reinspection',"
+            "'status_changed','archived'",
+        )
     )
 
     # ── (2) Справочники географии ─────────────────────────────────
