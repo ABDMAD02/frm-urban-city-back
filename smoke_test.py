@@ -39,11 +39,13 @@ check("GET /analytics/summary", c.get(f"{B}/analytics/summary").json()["total"] 
 check("GET /analytics/status-distribution", isinstance(c.get(f"{B}/analytics/status-distribution").json(), dict))
 
 # auth
-login = c.post(f"{B}/auth/v2/login", json={"email": "a.nurlanova@uralsk.kz", "password": "x"})
+login = c.post(f"{B}/auth/v2/login", json={"email": "a.nurlanova@uralsk.kz", "password": "UC-0001-u1"})
 check("POST /auth/v2/login", login.status_code == 200 and "access_token" in login.json())
 tok = login.json()["access_token"]
 me = c.get(f"{B}/auth/me", headers={"Authorization": f"Bearer {tok}"})
 check("GET /auth/me по токену = урбанист", me.json()["role"] == "urbanist")
+bad = c.post(f"{B}/auth/v2/login", json={"email": "a.nurlanova@uralsk.kz", "password": "wrong"})
+check("POST /auth/v2/login bad password → 401", bad.status_code == 401)
 
 # создание объекта
 new = c.post(f"{B}/objects", json={"name": "Тест-объект", "type": "Магазин", "lat": 51.2, "lng": 51.3})

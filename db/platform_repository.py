@@ -32,6 +32,7 @@ from app.platform_models import (
 )
 from app.store import DISTRICTS, MICRODISTRICTS, TYPES
 from app.user_helpers import login_for, temp_password
+from app.passwords import hash_password
 from db.codes import uuid_for_code
 from db import models as m
 from db.enums import (
@@ -229,6 +230,7 @@ class PlatformStore:
             login = f"{base}{n}"
 
         code = f"ra-{region_id}-{uuid.uuid4().hex[:6]}"
+        plain = temp_password(code)
         row = m.AppUser(
             id=uuid_for_code(code),
             code=code,
@@ -237,13 +239,14 @@ class PlatformStore:
             position="Администратор региона",
             login=login,
             email=f"{login}@{region_id}.local",
+            password_hash=hash_password(plain),
             status=DbAccountStatus.active,
             region_id=region_id,
             created_at=_now(),
         )
         self._session.add(row)
         self._session.flush()
-        creds = Credentials(login=login, tempPassword=temp_password(code))
+        creds = Credentials(login=login, tempPassword=plain)
         return self._region_admin(row), creds
 
     # ── reads ─────────────────────────────────────────────────────
@@ -308,6 +311,12 @@ class PlatformStore:
         else:
             row = self._session.scalar(q.where(m.AppUser.code == uid))
         return self._admin_user(row) if row else None
+
+    def authenticate_lookup(self, email_or_login: str) -> tuple[AdminUser | None, str | None]:
+        row = self.find_platform_user_by_login_or_email(email_or_login)
+        if row is None:
+            return None, None
+        return self._admin_user(row), row.password_hash
 
     def find_platform_user_by_login_or_email(self, email_or_login: str) -> m.AppUser | None:
         key = email_or_login.strip().lower()

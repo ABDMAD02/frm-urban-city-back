@@ -8,6 +8,7 @@ from ..models import (
     LoginRequest, RefreshRequest, TokenPair, AuthResponse, User, ChangePasswordRequest,
 )
 from ..platform_models import AdminUser
+from ..passwords import verify_password, hash_password
 from .platform import PlatformStoreDep
 
 router = APIRouter(tags=["Аутентификация"])
@@ -26,30 +27,37 @@ def _admin_as_user(admin: AdminUser) -> User:
     )
 
 
+def _unauthorized() -> None:
+    raise HTTPException(
+        status.HTTP_401_UNAUTHORIZED,
+        detail={"message": "Неверный email или пароль", "code": "invalid_credentials"},
+    )
+
+
 @router.post("/auth/v2/login", response_model=AuthResponse, summary="Вход по email и паролю")
 def login(body: LoginRequest, repo: StoreDep, platform: PlatformStoreDep):
-    email_login = body.email.split("@")[0].lower()
+    email = (body.email or "").strip()
+    password = body.password or ""
+    if not email or not password:
+        _unauthorized()
 
-    found = platform.find_platform_user_by_login_or_email(body.email)
-    if found is not None:
-        if isinstance(found, AdminUser):
-            user = _admin_as_user(found)
-            tokens = security.issue_tokens(found)
-            return AuthResponse(user=user, **tokens.model_dump())
-        from db.mappers import user as map_user
-        user = map_user(found)
-        tokens = security.issue_tokens(user)
-        return AuthResponse(user=user, **tokens.model_dump())
+    # 1) Platform superadmin
+    admin, pwd_hash = platform.authenticate_lookup(email)
+    if admin is not None:
+        if not verify_password(password, pwd_hash):
+            _unauthorized()
+        tokens = security.issue_tokens(admin)
+        return AuthResponse(user=_admin_as_user(admin), **tokens.model_dump())
 
-    user = repo.find_user_by_login(email_login)
-    if user is None:
-        users = repo.list_users()
-        if not users:
-            raise HTTPException(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                "База не инициализирована: нет пользователей (запустите seed)",
-            )
-        user = users[0]
+    # 2) Regional / any app_user (including platform row via DbStore if present)
+    user, pwd_hash = repo.authenticate_lookup(email)
+    if user is None or not verify_password(password, pwd_hash):
+        _unauthorized()
+    if user.status == AccountStatus.blocked:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={"message": "Аккаунт заблокирован", "code": "account_blocked"},
+        )
     tokens = security.issue_tokens(user)
     return AuthResponse(user=user, **tokens.model_dump())
 
@@ -90,5 +98,23 @@ def logout():
 
 
 @router.post("/auth/change-password", status_code=204, summary="Сменить пароль")
-def change_password(body: ChangePasswordRequest, user: User = Depends(security.get_current_user)):
+def change_password(
+    body: ChangePasswordRequest,
+    repo: StoreDep,
+    user: User = Depends(security.get_current_user),
+):
+    _, current_hash = repo.authenticate_lookup(user.login or user.email or user.id)
+    if not verify_password(body.oldPassword, current_hash):
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail={"message": "Неверный текущий пароль", "code": "invalid_credentials"},
+        )
+    if len(body.newPassword) < 8:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={"message": "Пароль слишком короткий (мин. 8)", "code": "weak_password"},
+        )
+    ok = repo.set_password(user.id, body.newPassword)
+    if not ok:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
     return Response(status_code=204)

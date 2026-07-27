@@ -22,10 +22,13 @@ r = c.get("/api/v1/platform/regions")
 check("GET /platform/regions without token → 401", r.status_code == 401)
 
 # login superadmin
-login = c.post("/api/v1/auth/v2/login", json={"email": "super@platform.local", "password": "x"})
+login = c.post("/api/v1/auth/v2/login", json={"email": "platform.admin@urban-city.kz", "password": "Urb4n-SA-2026!"})
 check("POST /auth/v2/login superadmin", login.status_code == 200 and "access_token" in login.json())
 tok = login.json()["access_token"]
 H = {"Authorization": f"Bearer {tok}"}
+
+bad = c.post("/api/v1/auth/v2/login", json={"email": "platform.admin@urban-city.kz", "password": "wrong"})
+check("POST /auth/v2/login bad password → 401", bad.status_code == 401)
 
 me = c.get("/api/v1/auth/v2/me", headers=H)
 check("GET /auth/v2/me", me.status_code == 200 and me.json().get("role") == "platform_superadmin")

@@ -404,6 +404,35 @@ class DbStore:
         )
         return self._map_user(row) if row else None
 
+    def authenticate_lookup(self, email_or_login: str) -> tuple[User | None, str | None]:
+        """Найти пользователя по email/login и вернуть (User, password_hash)."""
+        key = email_or_login.strip().lower()
+        login = key.split("@")[0]
+        row = self._session.scalar(
+            select(m.AppUser)
+            .where(
+                (func.lower(m.AppUser.login) == login)
+                | (func.lower(m.AppUser.email) == key)
+            )
+            .options(selectinload(m.AppUser.microdistricts))
+        )
+        if row is None:
+            return None, None
+        return self._map_user(row), row.password_hash
+
+    def set_password(self, uid_str: str, password: str) -> bool:
+        from app.passwords import hash_password
+
+        uid = self._resolve_uuid(m.AppUser, uid_str)
+        row = self._session.get(m.AppUser, uid) if uid else None
+        if row is None:
+            row = self._session.scalar(select(m.AppUser).where(m.AppUser.code == uid_str))
+        if row is None:
+            return False
+        row.password_hash = hash_password(password)
+        self._session.flush()
+        return True
+
     def find_region_admin(self) -> User | None:
         row = self._session.scalar(
             select(m.AppUser)
@@ -431,6 +460,9 @@ class DbStore:
         self._assert_user_limit(region_id)
         code = self.next_id("u")
         login = login_for(body.name)
+        plain = temp_password(code)
+        from app.passwords import hash_password
+
         row = m.AppUser(
             id=uuid_for_code(code),
             code=code,
@@ -438,6 +470,7 @@ class DbStore:
             role=body.role,
             position=body.position.strip(),
             login=login,
+            password_hash=hash_password(plain),
             status=AccountStatus.active,
             region_id=region_id,
             created_at=_parse_date(config.DEMO_TODAY),
@@ -449,7 +482,7 @@ class DbStore:
                 self._session.add(m.UserMicrodistrict(user_id=row.id, microdistrict_id=md_id))
             self._session.flush()
             self._session.refresh(row, attribute_names=["microdistricts"])
-        creds = Credentials(login=login, tempPassword=temp_password(code))
+        creds = Credentials(login=login, tempPassword=plain)
         return self._map_user(row), creds
 
     def update_user(self, uid_str: str, body: UpdateUserRequest) -> tuple[User | None, Credentials | None]:
@@ -466,8 +499,12 @@ class DbStore:
             for md_id in body.microdistrictIds:
                 self._session.add(m.UserMicrodistrict(user_id=row.id, microdistrict_id=md_id))
         if body.resetPassword:
-            row.status = "active"
-            creds = Credentials(login=row.login or "", tempPassword=temp_password(uid_str))
+            from app.passwords import hash_password
+
+            row.status = AccountStatus.active
+            plain = temp_password(row.code or uid_str)
+            row.password_hash = hash_password(plain)
+            creds = Credentials(login=row.login or "", tempPassword=plain)
         self._session.flush()
         return self._map_user(row), creds
 

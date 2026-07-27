@@ -24,7 +24,13 @@ from app.platform_models import (
     Subscription,
     SubscriptionPatch,
 )
-from app.user_helpers import login_for, temp_password
+from app.user_helpers import (
+    PLATFORM_SUPERADMIN_EMAIL,
+    PLATFORM_SUPERADMIN_PASSWORD,
+    login_for,
+    temp_password,
+)
+from app.passwords import hash_password
 from app.store import DISTRICTS, MICRODISTRICTS, TYPES
 
 _PLANS = [
@@ -67,10 +73,13 @@ class MemoryPlatformStore:
             AdminUser(
                 id="sa1",
                 name="Platform Superadmin",
-                email="super@platform.local",
+                email=PLATFORM_SUPERADMIN_EMAIL,
                 role="platform_superadmin",
             )
         ]
+        self._password_hashes: dict[str, str] = {
+            "sa1": hash_password(PLATFORM_SUPERADMIN_PASSWORD),
+        }
         self.region_admins: list[RegionAdminAccount] = [
             RegionAdminAccount(
                 id="u3",
@@ -127,6 +136,12 @@ class MemoryPlatformStore:
             if u.email.lower() == key or u.email.split("@")[0].lower() == login or u.id == login:
                 return u
         return None
+
+    def authenticate_lookup(self, email_or_login: str) -> tuple[AdminUser | None, str | None]:
+        admin = self.find_platform_user_by_login_or_email(email_or_login)
+        if admin is None or not isinstance(admin, AdminUser):
+            return None, None
+        return admin, self._password_hashes.get(admin.id)
 
     def _audit(self, region_id: str, actor: str, action: PlatformAuditAction, detail: str = "") -> None:
         self.audit.append(

@@ -179,24 +179,45 @@ def upgrade() -> None:
     op.drop_constraint("object_type_name_key", "object_type", type_="unique")
     op.create_unique_constraint("uq_object_type_region_name", "object_type", ["region_id", "name"])
 
-    # Seed platform superadmin (demo).
+    # Seed platform superadmin (demo credentials).
+    from app.passwords import hash_password
+    from app.user_helpers import (
+        PLATFORM_SUPERADMIN_EMAIL,
+        PLATFORM_SUPERADMIN_LOGIN,
+        PLATFORM_SUPERADMIN_PASSWORD,
+    )
+
+    pwd_hash = hash_password(PLATFORM_SUPERADMIN_PASSWORD)
     op.execute(
-        """
-        INSERT INTO app_user (id, code, name, role, position, login, email, status, region_id, created_at, version)
-        SELECT
-          gen_random_uuid(),
-          'sa1',
-          'Platform Superadmin',
-          'platform_superadmin',
-          'Супер-администратор платформы',
-          'superadmin',
-          'super@platform.local',
-          'active',
-          NULL,
-          now(),
-          1
-        WHERE NOT EXISTS (SELECT 1 FROM app_user WHERE login = 'superadmin')
-        """
+        sa.text(
+            """
+            INSERT INTO app_user (
+              id, code, name, role, position, login, email, password_hash,
+              status, region_id, created_at, version
+            )
+            SELECT
+              gen_random_uuid(),
+              'sa1',
+              'Platform Superadmin',
+              'platform_superadmin',
+              'Супер-администратор платформы',
+              :login,
+              :email,
+              :pwd_hash,
+              'active',
+              NULL,
+              now(),
+              1
+            WHERE NOT EXISTS (
+              SELECT 1 FROM app_user
+              WHERE login = :login OR email = :email OR code = 'sa1'
+            )
+            """
+        ).bindparams(
+            login=PLATFORM_SUPERADMIN_LOGIN,
+            email=PLATFORM_SUPERADMIN_EMAIL,
+            pwd_hash=pwd_hash,
+        )
     )
 
 

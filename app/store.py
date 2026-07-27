@@ -45,8 +45,8 @@ USERS = [
          position="Администратор региона", login="a.kenzhebekov",
          status=AccountStatus.active, createdAt="2026-05-01", regionId="uralsk"),
     User(id="sa1", name="Platform Superadmin", role=Role.platform_superadmin,
-         position="Супер-администратор платформы", login="superadmin",
-         email="super@platform.local", status=AccountStatus.active, createdAt="2026-05-01",
+         position="Супер-администратор платформы", login="platform.admin",
+         email="platform.admin@urban-city.kz", status=AccountStatus.active, createdAt="2026-05-01",
          regionId=None),
 ]
 
