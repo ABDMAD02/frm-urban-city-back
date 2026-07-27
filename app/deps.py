@@ -6,13 +6,13 @@ from typing import Annotated, Optional, Union
 
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import text
 
 from app import config
 from app.enums import Role
 from app.storage.memory import MemoryStore
 from db.base import SessionLocal, get_engine
 from db.repository import DbStore
-from db.seed import run_seed
 
 Store = Union[MemoryStore, DbStore]
 
@@ -63,10 +63,14 @@ StoreDep = Annotated[Store, Depends(get_store)]
 
 
 def init_database() -> None:
-    """Seed при старте. Миграции уже делает scripts/start.sh (один раз до gunicorn)."""
+    """Проверка соединения с БД при старте воркера.
+
+    Миграции / bootstrap / demo-seed делает только ``scripts/start.sh`` до gunicorn,
+    иначе каждый worker повторно заливает демо-данные.
+    """
     if not use_database():
         return
     get_engine()
     with SessionLocal() as session:
-        run_seed(session)
+        session.execute(text("SELECT 1"))
         session.commit()

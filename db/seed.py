@@ -126,37 +126,39 @@ def _ensure_platform_superadmin(session: Session) -> None:
 
 def _ensure_platform_bootstrap(session: Session, region_id: str = DEFAULT_REGION_ID) -> None:
     """Plans + default region/subscription — only for demo seed path."""
+    from sqlalchemy import text
+
     _ensure_plans(session)
 
-    region = session.get(m.Region, region_id)
-    if region is None:
-        session.add(
-            m.Region(
-                id=region_id,
-                code=region_id,
-                name="Уральск",
-                status=RegionStatus.active,
-                timezone="Asia/Oral",
-                locale=Locale.ru,
-                map_provider=MapProvider.twogis,
+    session.execute(
+        text(
+            """
+            INSERT INTO region (id, code, name, status, timezone, locale, map_provider)
+            VALUES (:id, :code, :name, 'active', 'Asia/Oral', 'ru', '2gis')
+            ON CONFLICT (id) DO NOTHING
+            """
+        ),
+        {"id": region_id, "code": region_id, "name": "Уральск"},
+    )
+    today = date.today()
+    session.execute(
+        text(
+            """
+            INSERT INTO subscription (
+              region_id, plan, status, max_users, max_objects, valid_from, valid_until
             )
-        )
-        session.flush()
-
-    sub = session.get(m.Subscription, region_id)
-    if sub is None:
-        today = date.today()
-        session.add(
-            m.Subscription(
-                region_id=region_id,
-                plan=SubscriptionPlan.standard,
-                status=SubscriptionStatus.active,
-                max_users=50,
-                max_objects=500,
-                valid_from=today,
-                valid_until=today + timedelta(days=365),
+            VALUES (
+              :region_id, 'standard', 'active', 50, 500, :valid_from, :valid_until
             )
-        )
+            ON CONFLICT (region_id) DO NOTHING
+            """
+        ),
+        {
+            "region_id": region_id,
+            "valid_from": today,
+            "valid_until": today + timedelta(days=365),
+        },
+    )
     session.flush()
 
 
