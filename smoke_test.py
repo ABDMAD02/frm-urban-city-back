@@ -99,6 +99,23 @@ gone = c.get(f"{B}/objects/{nid}", headers=admin_h)
 check("GET deleted object → 404", gone.status_code == 404)
 check("GET deleted object envelope", gone.json()["code"] == "http_404")
 
+# bulk-delete: create two, delete with missing id mixed in
+b1 = c.post(f"{B}/objects", json={"name": "Bulk-1", "type": "Магазин", "lat": 51.2, "lng": 51.3}, headers=admin_h)
+b2 = c.post(f"{B}/objects", json={"name": "Bulk-2", "type": "Магазин", "lat": 51.21, "lng": 51.31}, headers=admin_h)
+bulk_ids = [b1.json()["id"], b2.json()["id"], "missing-id", b1.json()["id"]]
+bulk_forbidden = c.post(f"{B}/objects/bulk-delete", json={"ids": bulk_ids}, headers=urbanist_h)
+check("POST /objects/bulk-delete as urbanist → 403", bulk_forbidden.status_code == 403)
+bulk_ok = c.post(f"{B}/objects/bulk-delete", json={"ids": bulk_ids}, headers=admin_h)
+check(
+    "POST /objects/bulk-delete → deleted=2",
+    bulk_ok.status_code == 200 and bulk_ok.json().get("deleted") == 2,
+)
+bulk_again = c.post(f"{B}/objects/bulk-delete", json={"ids": bulk_ids}, headers=admin_h)
+check(
+    "POST /objects/bulk-delete idempotent → deleted=0",
+    bulk_again.status_code == 200 and bulk_again.json().get("deleted") == 0,
+)
+
 # создать пользователя → логин+пароль
 usr_forbidden = c.post(f"{B}/users", json={"name": "Ержан Абдуллин", "role": "urbanist", "position": "спец"}, headers=urbanist_h)
 check("POST /users as urbanist → 403", usr_forbidden.status_code == 403)

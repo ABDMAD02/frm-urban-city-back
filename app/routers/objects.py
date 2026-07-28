@@ -8,8 +8,14 @@ from ..deps import StoreDep
 from ..security import accessible_object_ids, ensure_owner_business_access, ensure_object_access, get_current_user, require_region_admin
 from ..fsm import can_transition
 from ..models import (
-    CityObject, CreateObjectRequest, UpdateObjectRequest, User,
-    GeocodeResult, SearchResult,
+    BulkDeleteObjectsRequest,
+    BulkDeleteObjectsResult,
+    CityObject,
+    CreateObjectRequest,
+    UpdateObjectRequest,
+    User,
+    GeocodeResult,
+    SearchResult,
 )
 from ..enums import Role, ObjectStatus
 
@@ -25,6 +31,14 @@ def _scope(repo: StoreDep, objects: list[CityObject], user: User) -> list[CityOb
 
 def _active(objects: list[CityObject]) -> list[CityObject]:
     return [o for o in objects if o.status != ObjectStatus.archived]
+
+
+def _soft_delete_object(repo: StoreDep, oid: str, user: User) -> bool:
+    """Soft-delete one object. False if missing/already archived."""
+    obj = repo.find_object(oid)
+    if obj is None or obj.status == ObjectStatus.archived:
+        return False
+    return repo.delete_object(oid, user) is not None
 
 
 @router.get("/objects", response_model=list[CityObject], summary="Список объектов")
@@ -56,6 +70,29 @@ def list_objects(
 @router.post("/objects", response_model=CityObject, status_code=201, summary="Создать объект")
 def create_object(body: CreateObjectRequest, repo: StoreDep, user: User = Depends(get_current_user)):
     return repo.create_object(body, user)
+
+
+# Static path must be registered before /objects/{oid} so it is not captured as oid.
+@router.post(
+    "/objects/bulk-delete",
+    response_model=BulkDeleteObjectsResult,
+    summary="Массовое удаление объектов (только администратор района)",
+)
+def bulk_delete_objects(
+    body: BulkDeleteObjectsRequest,
+    repo: StoreDep,
+    user: User = Depends(require_region_admin),
+):
+    """Идемпотентно: несуществующие / уже archived id пропускаются."""
+    seen: set[str] = set()
+    deleted = 0
+    for oid in body.ids:
+        if not oid or oid in seen:
+            continue
+        seen.add(oid)
+        if _soft_delete_object(repo, oid, user):
+            deleted += 1
+    return BulkDeleteObjectsResult(deleted=deleted)
 
 
 @router.get("/objects/{oid}", response_model=CityObject, summary="Один объект")
@@ -91,11 +128,7 @@ def delete_object(
     user: User = Depends(require_region_admin),
 ):
     """Мягкое удаление: status → archived (физический DELETE в БД запрещён триггером)."""
-    obj = repo.find_object(oid)
-    if obj is None or obj.status == ObjectStatus.archived:
-        raise HTTPException(404, detail={"message": "Объект не найден", "code": "not_found"})
-    deleted = repo.delete_object(oid, user)
-    if deleted is None:
+    if not _soft_delete_object(repo, oid, user):
         raise HTTPException(404, detail={"message": "Объект не найден", "code": "not_found"})
     return None
 
