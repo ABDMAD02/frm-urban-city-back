@@ -161,6 +161,14 @@ class CreateObjectRequest(BaseModel):
     ownerId: str | None = None
 
 
+class BulkDeleteObjectsRequest(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+
+
+class BulkDeleteObjectsResult(BaseModel):
+    deleted: int
+
+
 class ObjectPatch(BaseModel):
     name: str | None = None
     type: str | None = None
