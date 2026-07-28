@@ -173,6 +173,9 @@ class Owner(Base):
     bin: Mapped[Optional[str]] = mapped_column(Text)  # БИН/ИИН, NULL для физлица без ИИН
     phone: Mapped[str] = mapped_column(Text, nullable=False)
     email: Mapped[Optional[str]] = mapped_column(Text)
+    owner_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("app_user.id", ondelete="SET NULL"), index=True
+    )
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
     __mapper_args__ = {"version_id_col": version}
@@ -194,10 +197,6 @@ class ObjectType(Base):
 # ── Пользователи (аккаунты входа) ─────────────────────────────────
 class AppUser(Base):
     __tablename__ = "app_user"
-    __table_args__ = (
-        # владелец обязан быть привязан к карточке собственника
-        CheckConstraint("role <> 'owner' OR owner_id IS NOT NULL", name="owner_link"),
-    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     code: Mapped[Optional[str]] = mapped_column(Text, unique=True)
@@ -213,6 +212,7 @@ class AppUser(Base):
     region_id: Mapped[Optional[str]] = mapped_column(
         Text, ForeignKey("region.id", ondelete="SET NULL"), index=True
     )
+    # Legacy 1:1 link; preferred link is Owner.owner_user_id (1 account → many businesses).
     owner_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("owner.id", ondelete="SET NULL")
     )
@@ -221,7 +221,7 @@ class AppUser(Base):
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
-    owner: Mapped[Optional[Owner]] = relationship()
+    owner: Mapped[Optional[Owner]] = relationship(foreign_keys=[owner_id])
     microdistricts: Mapped[list[UserMicrodistrict]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )

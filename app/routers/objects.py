@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .. import config
 from ..deps import StoreDep
-from ..security import get_current_user
+from ..security import get_current_user, require_region_admin
 from ..fsm import can_transition
 from ..models import (
     CityObject, CreateObjectRequest, UpdateObjectRequest, User,
@@ -26,6 +26,10 @@ def _scope(objects: list[CityObject], user: User) -> list[CityObject]:
     return objects
 
 
+def _active(objects: list[CityObject]) -> list[CityObject]:
+    return [o for o in objects if o.status != ObjectStatus.archived]
+
+
 @router.get("/objects", response_model=list[CityObject], summary="Список объектов")
 def list_objects(
     repo: StoreDep,
@@ -35,7 +39,7 @@ def list_objects(
     microdistrictId: Optional[str] = Query(None),
     q: Optional[str] = Query(None),
 ):
-    items = _scope(repo.list_objects(), user)
+    items = _active(_scope(repo.list_objects(), user))
     if status:
         items = [o for o in items if o.status == status]
     if type:
@@ -56,7 +60,7 @@ def create_object(body: CreateObjectRequest, repo: StoreDep, user: User = Depend
 @router.get("/objects/{oid}", response_model=CityObject, summary="Один объект")
 def get_object(oid: str, repo: StoreDep, user: User = Depends(get_current_user)):
     obj = repo.find_object(oid)
-    if obj is None:
+    if obj is None or obj.status == ObjectStatus.archived:
         raise HTTPException(404, "Объект не найден")
     return obj
 
@@ -64,7 +68,7 @@ def get_object(oid: str, repo: StoreDep, user: User = Depends(get_current_user))
 @router.patch("/objects/{oid}", response_model=CityObject, summary="Правка карточки")
 def update_object(oid: str, body: UpdateObjectRequest, repo: StoreDep, user: User = Depends(get_current_user)):
     obj = repo.find_object(oid)
-    if obj is None:
+    if obj is None or obj.status == ObjectStatus.archived:
         raise HTTPException(404, "Объект не найден")
     patch = body.patch
     if patch.status is not None and not can_transition(obj.status, patch.status):
@@ -73,11 +77,34 @@ def update_object(oid: str, body: UpdateObjectRequest, repo: StoreDep, user: Use
     return updated
 
 
+@router.delete(
+    "/objects/{oid}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Удалить объект (только администратор района)",
+)
+def delete_object(
+    oid: str,
+    repo: StoreDep,
+    user: User = Depends(require_region_admin),
+):
+    """Мягкое удаление: status → archived (физический DELETE в БД запрещён триггером)."""
+    obj = repo.find_object(oid)
+    if obj is None or obj.status == ObjectStatus.archived:
+        raise HTTPException(404, detail={"message": "Объект не найден", "code": "not_found"})
+    deleted = repo.delete_object(oid, user)
+    if deleted is None:
+        raise HTTPException(404, detail={"message": "Объект не найден", "code": "not_found"})
+    return None
+
+
 @router.get("/search", response_model=SearchResult, summary="Глобальный поиск")
 def search(repo: StoreDep, q: str = Query(...), user: User = Depends(get_current_user)):
     ql = q.lower()
-    found = [o for o in _scope(repo.list_objects(), user)
-             if ql in o.name.lower() or ql in o.address.lower() or ql in o.type.lower()]
+    found = [
+        o
+        for o in _active(_scope(repo.list_objects(), user))
+        if ql in o.name.lower() or ql in o.address.lower() or ql in o.type.lower()
+    ]
     return SearchResult(objects=found)
 
 

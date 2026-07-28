@@ -94,6 +94,25 @@ class MemoryStore:
         obj.updatedAt = config.DEMO_TODAY
         return obj
 
+    def delete_object(self, oid: str, actor: User) -> CityObject | None:
+        """Soft-delete: status → archived."""
+        obj = store.find_object(oid)
+        if obj is None or obj.status == ObjectStatus.archived:
+            return None
+        obj.status = ObjectStatus.archived
+        obj.updatedAt = config.DEMO_TODAY
+        self.append_history(
+            HistoryEvent(
+                id=store.next_id("h"),
+                objectId=oid,
+                type=HistoryType.archived,
+                actor=actor.name,
+                date=config.DEMO_TODAY,
+                text="Объект удалён администратором района",
+            )
+        )
+        return obj
+
     def list_inspections(self) -> list[Inspection]:
         return store.INSPECTIONS
 
@@ -171,15 +190,40 @@ class MemoryStore:
 
     def create_user(self, body: CreateUserRequest) -> tuple[User, Credentials]:
         from app.passwords import hash_password
+        from fastapi import HTTPException
 
         code = store.next_id("u")
         login = login_for(body.name)
         plain = temp_password(code)
+        if body.role.value == "owner" and body.ownerId:
+            owner = self.find_owner(body.ownerId)
+            if owner is None:
+                raise HTTPException(
+                    400,
+                    detail={"message": "Собственник не найден", "code": "owner_not_found"},
+                )
+            owner.ownerUserId = code
         new = User(
-            id=code, name=body.name.strip(), role=body.role, position=body.position.strip(),
+            id=code,
+            name=body.name.strip(),
+            role=body.role,
+            position=body.position.strip(),
             microdistrictIds=body.microdistrictIds if body.role.value == "urbanist" else None,
-            login=login, status="active", createdAt=config.DEMO_TODAY,
+            ownerObjectIds=(
+                [o.id for o in store.OBJECTS if any(
+                    ow.id == o.ownerId and ow.ownerUserId == code for ow in store.OWNERS
+                )]
+                if body.role.value == "owner"
+                else None
+            ),
+            login=login,
+            status="active",
+            createdAt=config.DEMO_TODAY,
         )
+        # Recompute ownerObjectIds after possible link
+        if body.role.value == "owner":
+            linked = {ow.id for ow in store.OWNERS if ow.ownerUserId == code}
+            new.ownerObjectIds = [o.id for o in store.OBJECTS if o.ownerId in linked]
         store.USERS.append(new)
         self._password_hashes[new.id] = hash_password(plain)
         return new, Credentials(login=login, tempPassword=plain)
@@ -202,21 +246,50 @@ class MemoryStore:
             creds = Credentials(login=user.login or "", tempPassword=plain)
         return user, creds
 
-    def list_owners(self) -> list[Owner]:
-        return store.OWNERS
+    def list_owners(self, owner_user_id: str | None = None) -> list[Owner]:
+        items = store.OWNERS
+        if owner_user_id:
+            items = [o for o in items if o.ownerUserId == owner_user_id]
+        return items
 
     def find_owner(self, wid: str) -> Owner | None:
         return next((o for o in store.OWNERS if o.id == wid), None)
 
     def create_owner(self, body: CreateOwnerRequest) -> Owner:
+        from fastapi import HTTPException
+        from app.enums import Role
+
+        if body.ownerUserId:
+            user = self.find_user_by_id(body.ownerUserId)
+            if user is None or user.role != Role.owner:
+                raise HTTPException(
+                    422,
+                    detail={
+                        "message": "ownerUserId must reference an existing User with role=owner",
+                        "code": "invalid_owner_user",
+                    },
+                )
         owner = Owner(id=store.next_id("w"), **body.model_dump())
         store.OWNERS.append(owner)
         return owner
 
     def update_owner(self, wid: str, body: CreateOwnerRequest) -> Owner | None:
+        from fastapi import HTTPException
+        from app.enums import Role
+
         owner = self.find_owner(wid)
         if owner is None:
             return None
+        if body.ownerUserId:
+            user = self.find_user_by_id(body.ownerUserId)
+            if user is None or user.role != Role.owner:
+                raise HTTPException(
+                    422,
+                    detail={
+                        "message": "ownerUserId must reference an existing User with role=owner",
+                        "code": "invalid_owner_user",
+                    },
+                )
         for k, v in body.model_dump().items():
             setattr(owner, k, v)
         return owner

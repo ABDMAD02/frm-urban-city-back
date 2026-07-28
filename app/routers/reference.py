@@ -1,7 +1,7 @@
 """Справочники (собственники, районы, микрорайоны, типы), фото, история, версии."""
 from __future__ import annotations
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 
 from .. import config
 from ..deps import StoreDep
@@ -16,8 +16,12 @@ router = APIRouter(tags=["Справочники"])
 
 
 @router.get("/owners", response_model=list[Owner], summary="Собственники")
-def list_owners(repo: StoreDep, user: User = Depends(get_current_user)):
-    return repo.list_owners()
+def list_owners(
+    repo: StoreDep,
+    user: User = Depends(get_current_user),
+    ownerUserId: Optional[str] = Query(None, description="Фильтр по аккаунту-владельцу"),
+):
+    return repo.list_owners(owner_user_id=ownerUserId)
 
 
 @router.post("/owners", response_model=Owner, status_code=201, summary="Создать собственника")

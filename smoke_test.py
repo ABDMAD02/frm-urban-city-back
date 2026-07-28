@@ -29,7 +29,7 @@ check("GET /health", health.get("status") == "ok")
 
 # чтения
 objs = c.get(f"{B}/objects").json()
-check("GET /objects → 36", len(objs) == 36)
+check("GET /objects → 34 active", len(objs) == 34)
 check("GET /inspections", c.get(f"{B}/inspections").status_code == 200)
 check("GET /prescriptions", c.get(f"{B}/prescriptions").status_code == 200)
 check("GET /owners", len(c.get(f"{B}/owners").json()) == 8)
@@ -82,10 +82,67 @@ check("POST inspection без фото → 400", nofoto.status_code == 400)
 re = c.post(f"{B}/objects/{nid}/reinspections", json={"result": "fixed"})
 check("POST reinspection fixed → violation_fixed", re.status_code == 200 and re.json()["status"] == "violation_fixed")
 
+# DELETE object: no token → 401, urbanist → 403, region_admin → 204
+del_anon = c.delete(f"{B}/objects/{nid}")
+check("DELETE /objects without token → 401", del_anon.status_code == 401)
+del_forbidden = c.delete(f"{B}/objects/{nid}", headers={"Authorization": f"Bearer {tok}"})
+check("DELETE /objects as urbanist → 403", del_forbidden.status_code == 403)
+admin_login = c.post(f"{B}/auth/v2/login", json={"email": "a.kenzhebekov@uralsk.kz", "password": "UC-0003-u3"})
+check("POST /auth/v2/login region_admin", admin_login.status_code == 200 and "access_token" in admin_login.json())
+admin_tok = admin_login.json()["access_token"]
+del_ok = c.delete(f"{B}/objects/{nid}", headers={"Authorization": f"Bearer {admin_tok}"})
+check("DELETE /objects as region_admin → 204", del_ok.status_code == 204)
+gone = c.get(f"{B}/objects/{nid}", headers={"Authorization": f"Bearer {admin_tok}"})
+check("GET deleted object → 404", gone.status_code == 404)
+
 # создать пользователя → логин+пароль
 usr = c.post(f"{B}/users", json={"name": "Ержан Абдуллин", "role": "urbanist", "position": "спец"})
 uj = usr.json()
 check("POST /users → login+tempPassword", usr.status_code == 201 and uj["credentials"]["login"] == "e.abdullin")
+
+# аккаунт-владелец + несколько ТОО (ownerUserId)
+own_acc = c.post(
+    f"{B}/users",
+    json={"name": "Тест Владелец", "role": "owner", "position": "Владелец бизнеса"},
+)
+check("POST /users role=owner → 201", own_acc.status_code == 201)
+own_uid = own_acc.json()["user"]["id"]
+biz1 = c.post(
+    f"{B}/owners",
+    json={
+        "name": "ТОО «Мади»",
+        "legalForm": "ТОО",
+        "bin": "121203550179",
+        "phone": "87086272471",
+        "email": "owner@mail.kz",
+        "ownerUserId": own_uid,
+    },
+)
+check("POST /owners with ownerUserId → 201", biz1.status_code == 201 and biz1.json().get("ownerUserId") == own_uid)
+biz2 = c.post(
+    f"{B}/owners",
+    json={
+        "name": "ИП «Мади»",
+        "legalForm": "ИП",
+        "bin": "900101300123",
+        "phone": "87086272471",
+        "ownerUserId": own_uid,
+    },
+)
+check("POST second Owner same account → 201", biz2.status_code == 201)
+filt = c.get(f"{B}/owners", params={"ownerUserId": own_uid})
+check("GET /owners?ownerUserId= → 2", filt.status_code == 200 and len(filt.json()) == 2)
+bad_link = c.post(
+    f"{B}/owners",
+    json={
+        "name": "ТОО Bad",
+        "legalForm": "ТОО",
+        "bin": "121203550180",
+        "phone": "87086272471",
+        "ownerUserId": "u1",
+    },
+)
+check("POST /owners ownerUserId=urbanist → 422", bad_link.status_code == 422)
 
 # отправка предписания по email
 pid = c.get(f"{B}/prescriptions").json()[0]["id"]

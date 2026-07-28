@@ -41,7 +41,7 @@ def microdistrict(row: orm.Microdistrict) -> dto.Microdistrict:
     return dto.Microdistrict(id=row.id, districtId=row.district_id, name=row.name)
 
 
-def owner(row: orm.Owner) -> dto.Owner:
+def owner(row: orm.Owner, *, owner_user_id: str | None = None) -> dto.Owner:
     return dto.Owner(
         id=_code(row),
         name=row.name,
@@ -49,6 +49,7 @@ def owner(row: orm.Owner) -> dto.Owner:
         bin=row.bin,
         phone=row.phone,
         email=row.email,
+        ownerUserId=owner_user_id,
     )
 
 

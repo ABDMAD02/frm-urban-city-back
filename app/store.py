@@ -52,7 +52,7 @@ USERS = [
 
 OWNERS = [
     Owner(id="w1", name="ТОО «Урал-Строй»", legalForm=LegalForm.too, bin="180140012345", phone="+7 711 234-56-78"),
-    Owner(id="w2", name="ИП «Сапаров Д.»", legalForm=LegalForm.ip, bin="870615300123", phone="+7 705 111-22-33", email="saparov@mail.kz"),
+    Owner(id="w2", name="ИП «Сапаров Д.»", legalForm=LegalForm.ip, bin="870615300123", phone="+7 705 111-22-33", email="saparov@mail.kz", ownerUserId="u2"),
     Owner(id="w3", name="ТОО «Гранд Плаза»", legalForm=LegalForm.too, bin="160240067890", phone="+7 711 555-10-20"),
     Owner(id="w4", name="Акимат г. Уральск", legalForm=LegalForm.gosorgan, phone="+7 711 500-00-00"),
     Owner(id="w5", name="ИП «Ахметова Г.»", legalForm=LegalForm.ip, bin="920310450678", phone="+7 747 900-80-70"),

@@ -340,6 +340,16 @@ def run_seed(session: Session) -> None:
                 existing_umds.add(key)
     session.flush()
 
+    # Owner.owner_user_id: account → many businesses (per seed ownerUserId).
+    for o in seed.OWNERS:
+        if not o.ownerUserId:
+            continue
+        owner_row = owner_uuid.get(o.id)
+        user_row = user_uuid.get(o.ownerUserId)
+        if owner_row is not None and user_row is not None:
+            owner_row.owner_user_id = user_row.id
+    session.flush()
+
     object_uuid: dict[str, m.CityObject] = {}
     existing_objects = {
         row.code: row
