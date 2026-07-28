@@ -102,7 +102,7 @@ def require_region_admin(
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             detail={
-                "message": "Удаление объектов доступно только администратору района",
+                "message": "Действие доступно только администратору района",
                 "code": "forbidden",
             },
         )
@@ -112,6 +112,59 @@ def require_region_admin(
             detail={"message": "Аккаунт заблокирован", "code": "account_blocked"},
         )
     return user
+
+
+def owner_business_ids(repo: StoreDep, user: User) -> set[str]:
+    """Все business Owner.id, привязанные к owner-аккаунту."""
+    if user.role != Role.owner:
+        return set()
+    return {o.id for o in repo.list_owners(owner_user_id=user.id)}
+
+
+def accessible_object_ids(repo: StoreDep, user: User) -> set[str]:
+    """Object ids visible to current role."""
+    all_objects = repo.list_objects()
+    if user.role == Role.owner:
+        business_ids = owner_business_ids(repo, user)
+        return {o.id for o in all_objects if o.ownerId in business_ids}
+    if user.role == Role.urbanist and user.microdistrictIds:
+        mds = set(user.microdistrictIds)
+        return {o.id for o in all_objects if o.microdistrictId in mds}
+    return {o.id for o in all_objects}
+
+
+def owner_object_ids(repo: StoreDep, user: User) -> set[str]:
+    """Все object ids, доступные owner-аккаунту через его бизнесы."""
+    if user.role != Role.owner:
+        return set()
+    return accessible_object_ids(repo, user)
+
+
+def ensure_object_access(repo: StoreDep, user: User, object_id: str) -> None:
+    """403 if current role tries to access object outside its server scope."""
+    if user.role not in (Role.owner, Role.urbanist):
+        return
+    if object_id not in accessible_object_ids(repo, user):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={"message": "Нет доступа к объекту", "code": "forbidden"},
+        )
+
+
+def ensure_owner_object_access(repo: StoreDep, user: User, object_id: str) -> None:
+    """Backward-compatible wrapper for owner/field scopes."""
+    ensure_object_access(repo, user, object_id)
+
+
+def ensure_owner_business_access(repo: StoreDep, user: User, owner_id: str) -> None:
+    """403 if owner tries to access чужой бизнес."""
+    if user.role != Role.owner:
+        return
+    if owner_id not in owner_business_ids(repo, user):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={"message": "Нет доступа к бизнесу", "code": "forbidden"},
+        )
 
 
 def user_to_admin(user: User) -> AdminUser | None:

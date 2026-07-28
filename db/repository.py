@@ -173,15 +173,15 @@ class DbStore:
             owner_id=owner_uid,
             status=ObjectStatus.new,
             responsible=actor.name,
-            created_at=_parse_date(config.DEMO_TODAY),
-            updated_at=_parse_date(config.DEMO_TODAY),
+            created_at=_parse_date(config.today_str()),
+            updated_at=_parse_date(config.today_str()),
         )
         self._session.add(row)
         self._session.flush()
         self.append_history(
             HistoryEvent(
                 id="", objectId=code, type=HistoryType.object_created,
-                actor=actor.name, date=config.DEMO_TODAY,
+                actor=actor.name, date=config.today_str(),
                 text="Объект создан и добавлен на карту",
             )
         )
@@ -227,11 +227,11 @@ class DbStore:
                 setattr(row, attr, self._resolve_uuid(m.Owner, v))
             elif hasattr(row, attr):
                 setattr(row, attr, v)
-        row.updated_at = _parse_date(config.DEMO_TODAY)
+        row.updated_at = _parse_date(config.today_str())
         htype = HistoryType.status_changed if "status" in data else HistoryType.card_updated
         self.append_history(HistoryEvent(
             id="", objectId=oid, type=htype, actor=actor,
-            date=config.DEMO_TODAY, text=note or "Карточка объекта обновлена",
+            date=config.today_str(), text=note or "Карточка объекта обновлена",
         ))
         self._session.flush()
         return mappers.city_object(row)
@@ -242,7 +242,7 @@ class DbStore:
         if row is None:
             return None
         row.status = status
-        row.updated_at = _parse_date(config.DEMO_TODAY)
+        row.updated_at = _parse_date(config.today_str())
         self._session.flush()
         return mappers.city_object(row)
 
@@ -257,14 +257,14 @@ class DbStore:
         if self._region_id and row.region_id and row.region_id != self._region_id:
             return None
         row.status = ObjectStatus.archived
-        row.updated_at = _parse_date(config.DEMO_TODAY)
+        row.updated_at = _parse_date(config.today_str())
         self.append_history(
             HistoryEvent(
                 id="",
                 objectId=oid,
                 type=HistoryType.archived,
                 actor=actor.name,
-                date=config.DEMO_TODAY,
+                date=config.today_str(),
                 text="Объект удалён администратором района",
             )
         )
@@ -329,6 +329,7 @@ class DbStore:
         self._session.add(row)
         self._session.flush()
         photo.id = code
+        photo.objectId = object_id
         return photo
 
     def add_prescription(self, pr: Prescription) -> Prescription:
@@ -549,7 +550,7 @@ class DbStore:
             status=AccountStatus.active,
             region_id=region_id,
             owner_id=None,
-            created_at=_parse_date(config.DEMO_TODAY),
+            created_at=_parse_date(config.today_str()),
         )
         self._session.add(row)
         self._session.flush()

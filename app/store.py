@@ -126,12 +126,12 @@ def _build_objects() -> list[CityObject]:
 OBJECTS = _build_objects()
 
 PHOTOS = [
-    Photo(id="p1", kind=PhotoKind.before, caption="Фасад до устранения — незаконная вывеска", color="#b45309", date="2026-05-12", author="Айгерим Нурланова"),
-    Photo(id="p2", kind=PhotoKind.before, caption="Рекламная конструкция без паспорта", color="#92400e", date="2026-05-12", author="Айгерим Нурланова"),
-    Photo(id="p3", kind=PhotoKind.after, caption="Фасад после устранения", color="#15803d", date="2026-06-20", author="Данияр Сапаров"),
-    Photo(id="p4", kind=PhotoKind.general, caption="Общий вид объекта", color="#0b5cad", date="2026-05-12", author="Айгерим Нурланова"),
-    Photo(id="p5", kind=PhotoKind.before, caption="Входная группа — нарушение дизайн-кода", color="#a16207", date="2026-04-03", author="Айгерим Нурланова"),
-    Photo(id="p6", kind=PhotoKind.after, caption="Входная группа приведена в соответствие", color="#0f766e", date="2026-05-01", author="Данияр Сапаров"),
+    Photo(id="p1", objectId="o5", kind=PhotoKind.before, caption="Фасад до устранения — незаконная вывеска", color="#b45309", date="2026-05-12", author="Айгерим Нурланова"),
+    Photo(id="p2", objectId="o5", kind=PhotoKind.before, caption="Рекламная конструкция без паспорта", color="#92400e", date="2026-05-12", author="Айгерим Нурланова"),
+    Photo(id="p3", objectId="o12", kind=PhotoKind.after, caption="Фасад после устранения", color="#15803d", date="2026-06-20", author="Данияр Сапаров"),
+    Photo(id="p4", objectId="o1", kind=PhotoKind.general, caption="Общий вид объекта", color="#0b5cad", date="2026-05-12", author="Айгерим Нурланова"),
+    Photo(id="p5", objectId="o12", kind=PhotoKind.before, caption="Входная группа — нарушение дизайн-кода", color="#a16207", date="2026-04-03", author="Айгерим Нурланова"),
+    Photo(id="p6", objectId="o12", kind=PhotoKind.after, caption="Входная группа приведена в соответствие", color="#0f766e", date="2026-05-01", author="Данияр Сапаров"),
 ]
 
 

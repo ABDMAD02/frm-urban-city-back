@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .. import config
 from ..deps import StoreDep
-from ..security import get_current_user, require_region_admin
+from ..security import accessible_object_ids, ensure_owner_business_access, ensure_object_access, get_current_user, require_region_admin
 from ..fsm import can_transition
 from ..models import (
     CityObject, CreateObjectRequest, UpdateObjectRequest, User,
@@ -16,13 +16,10 @@ from ..enums import Role, ObjectStatus
 router = APIRouter(tags=["Объекты"])
 
 
-def _scope(objects: list[CityObject], user: User) -> list[CityObject]:
-    if user.role == Role.owner:
-        ids = set(user.ownerObjectIds or [])
+def _scope(repo: StoreDep, objects: list[CityObject], user: User) -> list[CityObject]:
+    if user.role in (Role.owner, Role.urbanist):
+        ids = accessible_object_ids(repo, user)
         return [o for o in objects if o.id in ids]
-    if user.role == Role.urbanist and user.microdistrictIds:
-        mds = set(user.microdistrictIds)
-        return [o for o in objects if o.microdistrictId in mds]
     return objects
 
 
@@ -36,10 +33,14 @@ def list_objects(
     user: User = Depends(get_current_user),
     status: Optional[ObjectStatus] = Query(None),
     type: Optional[str] = Query(None),
+    ownerId: Optional[str] = Query(None),
     microdistrictId: Optional[str] = Query(None),
     q: Optional[str] = Query(None),
 ):
-    items = _active(_scope(repo.list_objects(), user))
+    items = _active(_scope(repo, repo.list_objects(), user))
+    if ownerId:
+        ensure_owner_business_access(repo, user, ownerId)
+        items = [o for o in items if o.ownerId == ownerId]
     if status:
         items = [o for o in items if o.status == status]
     if type:
@@ -62,6 +63,7 @@ def get_object(oid: str, repo: StoreDep, user: User = Depends(get_current_user))
     obj = repo.find_object(oid)
     if obj is None or obj.status == ObjectStatus.archived:
         raise HTTPException(404, "Объект не найден")
+    ensure_object_access(repo, user, obj.id)
     return obj
 
 
@@ -70,6 +72,7 @@ def update_object(oid: str, body: UpdateObjectRequest, repo: StoreDep, user: Use
     obj = repo.find_object(oid)
     if obj is None or obj.status == ObjectStatus.archived:
         raise HTTPException(404, "Объект не найден")
+    ensure_object_access(repo, user, obj.id)
     patch = body.patch
     if patch.status is not None and not can_transition(obj.status, patch.status):
         raise HTTPException(409, f"Недопустимый переход статуса: {obj.status.value} → {patch.status.value}")
@@ -102,7 +105,7 @@ def search(repo: StoreDep, q: str = Query(...), user: User = Depends(get_current
     ql = q.lower()
     found = [
         o
-        for o in _active(_scope(repo.list_objects(), user))
+        for o in _active(_scope(repo, repo.list_objects(), user))
         if ql in o.name.lower() or ql in o.address.lower() or ql in o.type.lower()
     ]
     return SearchResult(objects=found)
