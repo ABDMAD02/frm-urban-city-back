@@ -608,6 +608,21 @@ class DbStore:
         self._session.flush()
         return self._map_user(row), creds
 
+    def delete_user(self, uid_str: str) -> User | None:
+        """Hard-delete user account. Owner.owner_user_id → SET NULL via FK."""
+        uid = self._resolve_uuid(m.AppUser, uid_str)
+        row = self._session.get(m.AppUser, uid) if uid else None
+        if row is None:
+            return None
+        if self._region_id and row.region_id and row.region_id != self._region_id:
+            return None
+        if row.role in (Role.region_admin, Role.platform_superadmin):
+            return None
+        mapped = self._map_user(row)
+        self._session.delete(row)
+        self._session.flush()
+        return mapped
+
     # ── reference ─────────────────────────────────────────────────
     def list_owners(self, owner_user_id: str | None = None) -> list[Owner]:
         q = select(m.Owner)

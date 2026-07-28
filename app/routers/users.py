@@ -1,8 +1,8 @@
 """Пользователи региона: список, создание (логин+временный пароль), блокировка/сброс пароля."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..deps import StoreDep
-from ..security import get_current_user, require_region_admin
+from ..security import require_region_admin
 from ..models import (
     User, CreateUserRequest, CreateUserResponse,
     UpdateUserRequest, UpdateUserResponse,
@@ -33,3 +33,37 @@ def update_user(uid: str, body: UpdateUserRequest, repo: StoreDep, actor: User =
     if user is None:
         raise HTTPException(404, "Пользователь не найден")
     return UpdateUserResponse(user=user, credentials=creds)
+
+
+@router.delete(
+    "/users/{uid}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Удалить пользователя (только администратор района)",
+)
+def delete_user(uid: str, repo: StoreDep, actor: User = Depends(require_region_admin)):
+    target = repo.find_user_by_id(uid)
+    if target is None:
+        raise HTTPException(
+            404,
+            detail={"message": "Пользователь не найден", "code": "not_found"},
+        )
+    if target.id == actor.id:
+        raise HTTPException(
+            403,
+            detail={"message": "Нельзя удалить собственный аккаунт", "code": "forbidden"},
+        )
+    if target.role in (Role.region_admin, Role.platform_superadmin):
+        raise HTTPException(
+            403,
+            detail={
+                "message": "Нельзя удалить администратора",
+                "code": "forbidden",
+            },
+        )
+    deleted = repo.delete_user(uid)
+    if deleted is None:
+        raise HTTPException(
+            404,
+            detail={"message": "Пользователь не найден", "code": "not_found"},
+        )
+    return None
