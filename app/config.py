@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 try:
@@ -31,6 +32,8 @@ CORS_ORIGINS = [
 
 # В демо даты заморожены — как в прототипе фронта.
 DEMO_TODAY = os.getenv("DEMO_TODAY", "2026-07-02")
+PRESCRIPTION_DEADLINE_DAYS = int(os.getenv("PRESCRIPTION_DEADLINE_DAYS", "30"))
+REINSPECTION_DELAY_DAYS = int(os.getenv("REINSPECTION_DELAY_DAYS", "30"))
 
 # Cloudflare R2 (S3-compatible). Bucket: frm-urban-city
 R2_ENDPOINT_URL = os.getenv("R2_ENDPOINT_URL", "").strip()
@@ -63,6 +66,27 @@ def use_database() -> bool:
     return bool(os.getenv("DATABASE_URL")) and ENV == "production"
 
 _INSECURE_SECRETS = {"", "change-me-in-prod", "changeme", "secret"}
+
+
+def today_date() -> date:
+    """Runtime date: real clock in production, frozen demo date elsewhere."""
+    if ENV == "production":
+        return datetime.now(UTC).date()
+    return date.fromisoformat(DEMO_TODAY)
+
+
+def today_str() -> str:
+    return today_date().isoformat()
+
+
+def plus_days_str(days: int) -> str:
+    return (today_date() + timedelta(days=days)).isoformat()
+
+
+def now_iso() -> str:
+    if ENV == "production":
+        return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return DEMO_TODAY + "T09:00:00Z"
 
 
 def validate_production_settings() -> None:

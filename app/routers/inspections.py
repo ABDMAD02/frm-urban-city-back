@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from .. import config
 from ..deps import StoreDep
-from ..security import get_current_user
+from ..security import accessible_object_ids, ensure_object_access, get_current_user
 from ..fsm import can_transition
 from ..models import (
     Inspection, CreateInspectionRequest, InspectionResultView, ReinspectionRequest,
@@ -19,7 +19,9 @@ router = APIRouter(tags=["Проверки"])
 
 @router.get("/inspections", response_model=list[Inspection], summary="Список проверок")
 def list_inspections(repo: StoreDep, user: User = Depends(get_current_user)):
-    return repo.list_inspections()
+    items = repo.list_inspections()
+    allowed = accessible_object_ids(repo, user)
+    return [i for i in items if i.objectId in allowed]
 
 
 @router.post("/objects/{oid}/inspections", response_model=InspectionResultView, status_code=201,
@@ -28,6 +30,7 @@ def add_inspection(oid: str, body: CreateInspectionRequest, repo: StoreDep, user
     obj = repo.find_object(oid)
     if obj is None:
         raise HTTPException(404, "Объект не найден")
+    ensure_object_access(repo, user, oid)
     if not body.photos:
         raise HTTPException(400, "Фотофиксация обязательна: приложите минимум одно фото")
 
@@ -45,7 +48,7 @@ def add_inspection(oid: str, body: CreateInspectionRequest, repo: StoreDep, user
 
     repo.append_history(HistoryEvent(
         id="", objectId=oid, type=HistoryType.inspection_done,
-        actor=user.name, date=config.DEMO_TODAY,
+        actor=user.name, date=config.today_str(),
         text=body.note or ("Проведена проверка — выявлены замечания" if has_issues else "Проведена проверка — соответствует дизайн-коду"),
     ))
 
@@ -56,13 +59,15 @@ def add_inspection(oid: str, body: CreateInspectionRequest, repo: StoreDep, user
             id="", objectId=oid, inspectionId=insp.id,
             title="Устранение выявленных нарушений дизайн-кода",
             description=insp.comment or "Привести объект в соответствие с дизайн-кодом города.",
-            issuedAt=config.DEMO_TODAY, deadline=config.DEMO_TODAY, reinspectionDate=config.DEMO_TODAY,
+            issuedAt=config.today_str(),
+            deadline=config.plus_days_str(config.PRESCRIPTION_DEADLINE_DAYS),
+            reinspectionDate=config.plus_days_str(config.REINSPECTION_DELAY_DAYS),
             status=PrescriptionStatus.open,
         )
         prescription = repo.add_prescription(prescription)
         repo.append_history(HistoryEvent(
             id="", objectId=oid, type=HistoryType.prescription_issued,
-            actor=user.name, date=config.DEMO_TODAY, text="Выдано предписание",
+            actor=user.name, date=config.today_str(), text="Выдано предписание",
         ))
 
     obj = repo.find_object(oid)
@@ -81,6 +86,7 @@ def reinspect(oid: str, body: ReinspectionRequest, repo: StoreDep, user: User = 
     obj = repo.find_object(oid)
     if obj is None:
         raise HTTPException(404, "Объект не найден")
+    ensure_object_access(repo, user, oid)
     if obj.status == ObjectStatus.prescription_issued and can_transition(
         ObjectStatus.prescription_issued, ObjectStatus.awaiting_reinspection
     ):
@@ -91,6 +97,6 @@ def reinspect(oid: str, body: ReinspectionRequest, repo: StoreDep, user: User = 
     obj = repo.set_object_status(oid, target)
     repo.append_history(HistoryEvent(
         id="", objectId=oid, type=HistoryType.reinspection,
-        actor=user.name, date=config.DEMO_TODAY, text=note,
+        actor=user.name, date=config.today_str(), text=note,
     ))
     return obj

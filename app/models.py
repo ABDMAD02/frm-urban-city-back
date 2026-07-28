@@ -47,6 +47,7 @@ class Owner(BaseModel):
 # ── Фото / чек-лист / проверки / предписания ──────────────────────
 class Photo(BaseModel):
     id: str
+    objectId: str | None = None
     kind: PhotoKind
     caption: str
     color: str = ""          # плейсхолдер прототипа

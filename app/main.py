@@ -11,6 +11,7 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -71,10 +72,27 @@ for module in _ROUTERS:
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    """Платформенные ошибки: detail={message,code} → тело {message,code}."""
+    """Платформенные ошибки всегда отдаются как плоский {message, code}."""
     if isinstance(exc.detail, dict) and "message" in exc.detail and "code" in exc.detail:
         return JSONResponse(status_code=exc.status_code, content=exc.detail)
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    if isinstance(exc.detail, dict):
+        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"message": str(exc.detail), "code": f"http_{exc.status_code}"},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content={
+            "message": "Ошибка валидации запроса",
+            "code": "validation_error",
+            "errors": exc.errors(),
+        },
+    )
 
 
 @app.get("/", include_in_schema=False)

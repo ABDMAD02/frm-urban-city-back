@@ -62,12 +62,12 @@ class MemoryStore:
             districtId=body.districtId or "d1", microdistrictId=body.microdistrictId or "m1",
             street=body.street or "—", ownerId=body.ownerId or "w4",
             status=ObjectStatus.new, responsible=actor.name,
-            createdAt=config.DEMO_TODAY, updatedAt=config.DEMO_TODAY,
+            createdAt=config.today_str(), updatedAt=config.today_str(),
         )
         store.OBJECTS.append(obj)
         self.append_history(HistoryEvent(
             id=store.next_id("h"), objectId=oid, type=HistoryType.object_created,
-            actor=actor.name, date=config.DEMO_TODAY, text="Объект создан и добавлен на карту",
+            actor=actor.name, date=config.today_str(), text="Объект создан и добавлен на карту",
         ))
         return obj
 
@@ -78,11 +78,11 @@ class MemoryStore:
         data = patch.model_dump(exclude_none=True)
         for k, v in data.items():
             setattr(obj, k, v)
-        obj.updatedAt = config.DEMO_TODAY
+        obj.updatedAt = config.today_str()
         htype = HistoryType.status_changed if "status" in data else HistoryType.card_updated
         self.append_history(HistoryEvent(
             id=store.next_id("h"), objectId=oid, type=htype, actor=actor,
-            date=config.DEMO_TODAY, text=note or "Карточка объекта обновлена",
+            date=config.today_str(), text=note or "Карточка объекта обновлена",
         ))
         return obj
 
@@ -91,7 +91,7 @@ class MemoryStore:
         if obj is None:
             return None
         obj.status = status
-        obj.updatedAt = config.DEMO_TODAY
+        obj.updatedAt = config.today_str()
         return obj
 
     def delete_object(self, oid: str, actor: User) -> CityObject | None:
@@ -100,14 +100,14 @@ class MemoryStore:
         if obj is None or obj.status == ObjectStatus.archived:
             return None
         obj.status = ObjectStatus.archived
-        obj.updatedAt = config.DEMO_TODAY
+        obj.updatedAt = config.today_str()
         self.append_history(
             HistoryEvent(
                 id=store.next_id("h"),
                 objectId=oid,
                 type=HistoryType.archived,
                 actor=actor.name,
-                date=config.DEMO_TODAY,
+                date=config.today_str(),
                 text="Объект удалён администратором района",
             )
         )
@@ -126,6 +126,7 @@ class MemoryStore:
         if photo not in store.PHOTOS:
             if not photo.id:
                 photo.id = store.next_id("p")
+            photo.objectId = object_id
             store.PHOTOS.append(photo)
         return photo
 
@@ -218,7 +219,7 @@ class MemoryStore:
             ),
             login=login,
             status="active",
-            createdAt=config.DEMO_TODAY,
+            createdAt=config.today_str(),
         )
         # Recompute ownerObjectIds after possible link
         if body.role.value == "owner":
