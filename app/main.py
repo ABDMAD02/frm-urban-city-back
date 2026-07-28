@@ -15,6 +15,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
 from . import config
 from .deps import init_database
@@ -91,6 +92,17 @@ async def request_validation_exception_handler(request: Request, exc: RequestVal
             "message": "Ошибка валидации запроса",
             "code": "validation_error",
             "errors": exc.errors(),
+        },
+    )
+
+
+@app.exception_handler(OperationalError)
+async def database_operational_error_handler(request: Request, exc: OperationalError):
+    return JSONResponse(
+        status_code=503,
+        content={
+            "message": "База данных временно недоступна (лимит соединений или сеть)",
+            "code": "database_unavailable",
         },
     )
 
