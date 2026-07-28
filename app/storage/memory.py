@@ -247,6 +247,21 @@ class MemoryStore:
             creds = Credentials(login=user.login or "", tempPassword=plain)
         return user, creds
 
+    def delete_user(self, uid: str) -> User | None:
+        from app.enums import Role
+
+        user = self.find_user_by_id(uid)
+        if user is None:
+            return None
+        if user.role in (Role.region_admin, Role.platform_superadmin):
+            return None
+        store.USERS[:] = [u for u in store.USERS if u.id != uid]
+        self._password_hashes.pop(uid, None)
+        for owner in store.OWNERS:
+            if owner.ownerUserId == uid:
+                owner.ownerUserId = None
+        return user
+
     def list_owners(self, owner_user_id: str | None = None) -> list[Owner]:
         items = store.OWNERS
         if owner_user_id:

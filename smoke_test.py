@@ -106,6 +106,27 @@ usr = c.post(f"{B}/users", json={"name": "Ержан Абдуллин", "role": 
 uj = usr.json()
 check("POST /users → login+tempPassword", usr.status_code == 201 and uj["credentials"]["login"] == "e.abdullin")
 
+# DELETE user: only region_admin
+del_user_target = c.post(
+    f"{B}/users",
+    json={"name": "Удаляемый Юзер", "role": "urbanist", "position": "спец"},
+    headers=admin_h,
+)
+del_uid = del_user_target.json()["user"]["id"]
+del_user_anon = c.delete(f"{B}/users/{del_uid}")
+check("DELETE /users without token → 401", del_user_anon.status_code == 401)
+del_user_forbidden = c.delete(f"{B}/users/{del_uid}", headers=urbanist_h)
+check("DELETE /users as urbanist → 403", del_user_forbidden.status_code == 403)
+del_self = c.delete(f"{B}/users/u3", headers=admin_h)
+check("DELETE /users self → 403", del_self.status_code == 403)
+del_user_ok = c.delete(f"{B}/users/{del_uid}", headers=admin_h)
+check("DELETE /users as region_admin → 204", del_user_ok.status_code == 204)
+users_after = c.get(f"{B}/users", headers=admin_h)
+check(
+    "GET /users after delete excludes removed",
+    users_after.status_code == 200 and all(u["id"] != del_uid for u in users_after.json()),
+)
+
 # аккаунт-владелец + несколько ТОО (ownerUserId)
 own_acc = c.post(
     f"{B}/users",
