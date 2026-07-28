@@ -246,6 +246,31 @@ class DbStore:
         self._session.flush()
         return mappers.city_object(row)
 
+    def delete_object(self, oid: str, actor: User) -> CityObject | None:
+        """Soft-delete: status → archived (DB trigger forbids physical DELETE)."""
+        uid = self._object_uuid(oid)
+        if uid is None:
+            return None
+        row = self._session.get(m.CityObject, uid)
+        if row is None or row.status == ObjectStatus.archived:
+            return None
+        if self._region_id and row.region_id and row.region_id != self._region_id:
+            return None
+        row.status = ObjectStatus.archived
+        row.updated_at = _parse_date(config.DEMO_TODAY)
+        self.append_history(
+            HistoryEvent(
+                id="",
+                objectId=oid,
+                type=HistoryType.archived,
+                actor=actor.name,
+                date=config.DEMO_TODAY,
+                text="Объект удалён администратором района",
+            )
+        )
+        self._session.flush()
+        return mappers.city_object(row)
+
     # ── inspections / prescriptions ───────────────────────────────
     def list_inspections(self) -> list[Inspection]:
         rows = self._session.scalars(
@@ -444,24 +469,74 @@ class DbStore:
     def _map_user(self, row: m.AppUser) -> User:
         md_ids = [um.microdistrict_id for um in row.microdistricts] if row.microdistricts else None
         owner_objs = None
-        if row.role.value == "owner" and row.owner_id:
-            owner_code = self._owner_code_map().get(row.owner_id)
-            if owner_code:
+        if row.role.value == "owner":
+            business_ids = list(
+                self._session.scalars(
+                    select(m.Owner.id).where(m.Owner.owner_user_id == row.id)
+                ).all()
+            )
+            # Legacy fallback: AppUser.owner_id
+            if not business_ids and row.owner_id:
+                business_ids = [row.owner_id]
+            if business_ids:
                 objs = self._session.scalars(
                     select(m.CityObject.code).where(
-                        m.CityObject.owner_id == row.owner_id, m.CityObject.code.is_not(None)
+                        m.CityObject.owner_id.in_(business_ids),
+                        m.CityObject.code.is_not(None),
                     )
                 ).all()
                 owner_objs = list(objs)
         return mappers.user(row, microdistrict_ids=md_ids, owner_object_ids=owner_objs)
 
+    def _user_public_id(self, uid: uuid.UUID | None) -> str | None:
+        if uid is None:
+            return None
+        row = self._session.get(m.AppUser, uid)
+        if row is None:
+            return None
+        return row.code or str(row.id)
+
+    def _owner_dto(self, row: m.Owner) -> Owner:
+        return mappers.owner(row, owner_user_id=self._user_public_id(row.owner_user_id))
+
+    def _resolve_owner_account(
+        self, owner_user_id: str | None, *, region_id: str
+    ) -> uuid.UUID | None:
+        """Validate ownerUserId → AppUser(role=owner) in region. Raises HTTP 422."""
+        from fastapi import HTTPException
+
+        if owner_user_id is None or owner_user_id == "":
+            return None
+        uid = self._resolve_uuid(m.AppUser, owner_user_id)
+        user = self._session.get(m.AppUser, uid) if uid else None
+        if user is None or user.role.value != "owner":
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "ownerUserId must reference an existing User with role=owner",
+                    "code": "invalid_owner_user",
+                },
+            )
+        if user.region_id and user.region_id != region_id:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "ownerUserId must belong to the same region",
+                    "code": "owner_user_region_mismatch",
+                },
+            )
+        return user.id
+
     def create_user(self, body: CreateUserRequest) -> tuple[User, Credentials]:
+        from fastapi import HTTPException
+
+        from app.passwords import hash_password
+
         region_id = self._region_id or "uralsk"
         self._assert_user_limit(region_id)
         code = self.next_id("u")
         login = login_for(body.name)
         plain = temp_password(code)
-        from app.passwords import hash_password
 
         row = m.AppUser(
             id=uuid_for_code(code),
@@ -473,10 +548,34 @@ class DbStore:
             password_hash=hash_password(plain),
             status=AccountStatus.active,
             region_id=region_id,
+            owner_id=None,
             created_at=_parse_date(config.DEMO_TODAY),
         )
         self._session.add(row)
         self._session.flush()
+
+        # Optional: link existing business(es) card to this new account.
+        if body.role.value == "owner" and body.ownerId:
+            owner_uid = self._resolve_uuid(m.Owner, body.ownerId)
+            owner_row = self._session.get(m.Owner, owner_uid) if owner_uid else None
+            if owner_row is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"message": "Собственник не найден", "code": "owner_not_found"},
+                )
+            if owner_row.region_id and owner_row.region_id != region_id:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "message": "Owner and user must be in the same region",
+                        "code": "owner_user_region_mismatch",
+                    },
+                )
+            owner_row.owner_user_id = row.id
+            # Keep legacy column for older clients (non-unique now).
+            row.owner_id = owner_row.id
+            self._session.flush()
+
         if body.role.value == "urbanist" and body.microdistrictIds:
             for md_id in body.microdistrictIds:
                 self._session.add(m.UserMicrodistrict(user_id=row.id, microdistrict_id=md_id))
@@ -509,46 +608,57 @@ class DbStore:
         return self._map_user(row), creds
 
     # ── reference ─────────────────────────────────────────────────
-    def list_owners(self) -> list[Owner]:
+    def list_owners(self, owner_user_id: str | None = None) -> list[Owner]:
         q = select(m.Owner)
         if self._region_id:
             q = q.where(m.Owner.region_id == self._region_id)
-        return [mappers.owner(r) for r in self._session.scalars(q).all()]
+        if owner_user_id:
+            uid = self._resolve_uuid(m.AppUser, owner_user_id)
+            if uid is None:
+                return []
+            q = q.where(m.Owner.owner_user_id == uid)
+        return [self._owner_dto(r) for r in self._session.scalars(q).all()]
 
     def find_owner(self, wid: str) -> Owner | None:
         uid = self._resolve_uuid(m.Owner, wid)
         row = self._session.get(m.Owner, uid) if uid else None
-        return mappers.owner(row) if row else None
+        return self._owner_dto(row) if row else None
 
     def create_owner(self, body: CreateOwnerRequest) -> Owner:
+        region_id = self._region_id or "uralsk"
+        account_uid = self._resolve_owner_account(body.ownerUserId, region_id=region_id)
         code = self.next_id("w")
         row = m.Owner(
             id=uuid_for_code(code),
             code=code,
-            region_id=self._region_id or "uralsk",
+            region_id=region_id,
             name=body.name,
             legal_form=body.legalForm,
             bin=body.bin,
             phone=body.phone,
             email=body.email,
+            owner_user_id=account_uid,
         )
         self._session.add(row)
         self._session.flush()
         mappers.set_owner_code_map(self._owner_code_map())
-        return mappers.owner(row)
+        return self._owner_dto(row)
 
     def update_owner(self, wid: str, body: CreateOwnerRequest) -> Owner | None:
         uid = self._resolve_uuid(m.Owner, wid)
         row = self._session.get(m.Owner, uid) if uid else None
         if row is None:
             return None
+        region_id = row.region_id or self._region_id or "uralsk"
+        account_uid = self._resolve_owner_account(body.ownerUserId, region_id=region_id)
         row.name = body.name
         row.legal_form = body.legalForm
         row.bin = body.bin
         row.phone = body.phone
         row.email = body.email
+        row.owner_user_id = account_uid
         self._session.flush()
-        return mappers.owner(row)
+        return self._owner_dto(row)
 
     def list_districts(self) -> list[District]:
         q = select(m.District)

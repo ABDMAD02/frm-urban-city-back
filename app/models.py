@@ -41,6 +41,7 @@ class Owner(BaseModel):
     bin: str | None = None
     phone: str
     email: str | None = None
+    ownerUserId: str | None = None
 
 
 # ── Фото / чек-лист / проверки / предписания ──────────────────────
@@ -198,6 +199,8 @@ class CreateUserRequest(BaseModel):
     role: Role  # ожидается urbanist|owner
     position: str
     microdistrictIds: list[str] | None = None
+    # Для role=owner: id карточки собственника. Если не передан — создаётся автоматически.
+    ownerId: str | None = None
 
 
 class Credentials(BaseModel):
@@ -227,6 +230,7 @@ class CreateOwnerRequest(BaseModel):
     phone: str
     bin: str | None = None
     email: str | None = None
+    ownerUserId: str | None = None
 
 
 # ── Предписания — действия ────────────────────────────────────────

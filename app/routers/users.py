@@ -21,6 +21,8 @@ def list_users(repo: StoreDep, user: User = Depends(get_current_user)):
 def create_user(body: CreateUserRequest, repo: StoreDep, actor: User = Depends(get_current_user)):
     if body.role == Role.region_admin:
         raise HTTPException(403, "region_admin не заводится через этот метод")
+    if body.role == Role.platform_superadmin:
+        raise HTTPException(403, "platform_superadmin не заводится через этот метод")
     new, creds = repo.create_user(body)
     return CreateUserResponse(user=new, credentials=creds)
 

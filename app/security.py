@@ -81,6 +81,39 @@ def require_platform_token(
     return decode(creds.credentials, "access")
 
 
+def require_region_admin(
+    repo: StoreDep,
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> User:
+    """Только администратор района с валидным access JWT (без демо-подстановки)."""
+    if creds is None:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail={"message": "Требуется авторизация", "code": "unauthorized"},
+        )
+    uid = decode(creds.credentials, "access")
+    user = repo.find_user_by_id(uid)
+    if user is None:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail={"message": "Недействительная сессия", "code": "unauthorized"},
+        )
+    if user.role != Role.region_admin:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "Удаление объектов доступно только администратору района",
+                "code": "forbidden",
+            },
+        )
+    if user.status is not None and user.status.value == "blocked":
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={"message": "Аккаунт заблокирован", "code": "account_blocked"},
+        )
+    return user
+
+
 def user_to_admin(user: User) -> AdminUser | None:
     if user.role != Role.platform_superadmin:
         return None
