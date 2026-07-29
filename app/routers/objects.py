@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from .. import config
 from ..deps import StoreDep
 from ..security import accessible_object_ids, ensure_owner_business_access, ensure_object_access, get_current_user, require_region_admin
 from ..fsm import can_transition
