@@ -54,6 +54,7 @@ class DbStore:
         self._session = session
         self._region_id = region_id
         mappers.set_owner_code_map(self._owner_code_map())
+        mappers.set_street_code_map(self._street_code_map())
         self._counters = self._load_counters()
 
     def set_region(self, region_id: str | None) -> None:
@@ -64,9 +65,23 @@ class DbStore:
             return column == self._region_id
         return True
 
+    def _ensure_same_region(self, row_region_id: str | None) -> None:
+        """403 if row belongs to another city (tenant isolation)."""
+        from fastapi import HTTPException
+
+        if self._region_id and row_region_id and row_region_id != self._region_id:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "message": "Нет доступа к данным другого города",
+                    "code": "forbidden",
+                },
+            )
+
     def commit(self) -> None:
         self._session.commit()
         mappers.set_owner_code_map(self._owner_code_map())
+        mappers.set_street_code_map(self._street_code_map())
 
     def rollback(self) -> None:
         self._session.rollback()
@@ -76,6 +91,13 @@ class DbStore:
         q = select(m.Owner.id, m.Owner.code)
         if self._region_id:
             q = q.where(m.Owner.region_id == self._region_id)
+        rows = self._session.execute(q)
+        return {r.id: r.code for r in rows if r.code}
+
+    def _street_code_map(self) -> dict[uuid.UUID, str]:
+        q = select(m.Street.id, m.Street.code)
+        if self._region_id:
+            q = q.where(m.Street.region_id == self._region_id)
         rows = self._session.execute(q)
         return {r.id: r.code for r in rows if r.code}
 
@@ -119,6 +141,9 @@ class DbStore:
             )
         codes.extend(self._session.scalars(select(m.District.id)).all())
         codes.extend(self._session.scalars(select(m.Microdistrict.id)).all())
+        codes.extend(
+            self._session.scalars(select(m.Street.code).where(m.Street.code.is_not(None))).all()
+        )
         counters: dict[str, int] = {}
         for code in codes:
             mch = re.match(r"^([a-z]+)(\d+)$", code)
@@ -146,17 +171,45 @@ class DbStore:
         if uid is None:
             return None
         row = self._session.get(m.CityObject, uid)
-        return mappers.city_object(row) if row else None
+        if row is None:
+            return None
+        self._ensure_same_region(row.region_id)
+        return mappers.city_object(row)
 
     def create_object(self, body: CreateObjectRequest, actor: User) -> CityObject:
+        from app.address import DEFAULT_ADDRESS_SCHEMA, build_address
+
         region_id = actor.regionId or self._region_id or "uralsk"
         self._assert_object_limit(region_id)
         code = self.next_id("o")
         owner_uid = self._resolve_uuid(m.Owner, body.ownerId or "w4")
-        # Prefixed geo ids for non-default regions
-        prefix = "" if region_id == "uralsk" else f"{region_id}-"
-        district_id = body.districtId or f"{prefix}d1"
-        microdistrict_id = body.microdistrictId or f"{prefix}m1"
+        district_id = body.districtId
+        microdistrict_id = body.microdistrictId
+        street_uid = self._resolve_uuid(m.Street, body.streetId) if body.streetId else None
+        street_name = body.street
+        if street_uid:
+            st = self._session.get(m.Street, street_uid)
+            if st:
+                self._ensure_same_region(st.region_id)
+                street_name = st.name
+        region = self._session.get(m.Region, region_id)
+        schema = (region.address_schema if region else None) or DEFAULT_ADDRESS_SCHEMA
+        md_name = None
+        d_name = None
+        if microdistrict_id:
+            md = self._session.get(m.Microdistrict, microdistrict_id)
+            md_name = md.name if md else None
+        if district_id:
+            d = self._session.get(m.District, district_id)
+            d_name = d.name if d else None
+        address = body.address or build_address(
+            address_schema=schema,
+            district_name=d_name,
+            microdistrict_name=md_name,
+            street_name=street_name,
+            house=body.house,
+            apartment=body.apartment,
+        )
         row = m.CityObject(
             id=uuid_for_code(code),
             code=code,
@@ -164,12 +217,15 @@ class DbStore:
             name=body.name,
             type=body.type,
             category=body.category or "—",
-            address=body.address or "—",
+            address=address,
             lat=body.lat,
             lng=body.lng,
             district_id=district_id,
             microdistrict_id=microdistrict_id,
-            street=body.street or "—",
+            street=street_name or "—",
+            street_id=street_uid,
+            house=body.house,
+            apartment=body.apartment,
             owner_id=owner_uid,
             status=ObjectStatus.new,
             responsible=actor.name,
@@ -214,19 +270,58 @@ class DbStore:
             pass
 
     def update_object(self, oid: str, patch: ObjectPatch, note: str | None, actor: str) -> CityObject | None:
+        from app.address import DEFAULT_ADDRESS_SCHEMA, build_address
+
         uid = self._object_uuid(oid)
         if uid is None:
             return None
         row = self._session.get(m.CityObject, uid)
         if row is None:
             return None
+        self._ensure_same_region(row.region_id)
         data = patch.model_dump(exclude_none=True)
+        geo_keys = {
+            "districtId", "microdistrictId", "streetId", "street", "house", "apartment", "address",
+        }
+        rebuild_address = bool(geo_keys & data.keys()) and "address" not in data
         for k, v in data.items():
-            attr = {"districtId": "district_id", "microdistrictId": "microdistrict_id", "ownerId": "owner_id"}.get(k, k)
+            attr = {
+                "districtId": "district_id",
+                "microdistrictId": "microdistrict_id",
+                "ownerId": "owner_id",
+                "streetId": "street_id",
+            }.get(k, k)
             if attr == "owner_id" and v is not None:
                 setattr(row, attr, self._resolve_uuid(m.Owner, v))
+            elif attr == "street_id":
+                street_uid = self._resolve_uuid(m.Street, v) if v else None
+                if street_uid:
+                    st = self._session.get(m.Street, street_uid)
+                    if st:
+                        self._ensure_same_region(st.region_id)
+                        row.street = st.name
+                row.street_id = street_uid
             elif hasattr(row, attr):
                 setattr(row, attr, v)
+        if rebuild_address:
+            region = self._session.get(m.Region, row.region_id) if row.region_id else None
+            schema = (region.address_schema if region else None) or DEFAULT_ADDRESS_SCHEMA
+            md_name = None
+            d_name = None
+            if row.microdistrict_id:
+                md = self._session.get(m.Microdistrict, row.microdistrict_id)
+                md_name = md.name if md else None
+            if row.district_id:
+                d = self._session.get(m.District, row.district_id)
+                d_name = d.name if d else None
+            row.address = build_address(
+                address_schema=schema,
+                district_name=d_name,
+                microdistrict_name=md_name,
+                street_name=row.street,
+                house=row.house,
+                apartment=row.apartment,
+            )
         row.updated_at = _parse_date(config.today_str())
         htype = HistoryType.status_changed if "status" in data else HistoryType.card_updated
         self.append_history(HistoryEvent(
@@ -241,6 +336,7 @@ class DbStore:
         row = self._session.get(m.CityObject, uid) if uid else None
         if row is None:
             return None
+        self._ensure_same_region(row.region_id)
         row.status = status
         row.updated_at = _parse_date(config.today_str())
         self._session.flush()
@@ -254,8 +350,7 @@ class DbStore:
         row = self._session.get(m.CityObject, uid)
         if row is None or row.status == ObjectStatus.archived:
             return None
-        if self._region_id and row.region_id and row.region_id != self._region_id:
-            return None
+        self._ensure_same_region(row.region_id)
         row.status = ObjectStatus.archived
         row.updated_at = _parse_date(config.today_str())
         self.append_history(
@@ -288,6 +383,10 @@ class DbStore:
     def add_inspection(self, insp: Inspection) -> Inspection:
         code = insp.id or self.next_id("insp")
         obj_uid = self._object_uuid(insp.objectId)
+        if obj_uid is not None:
+            obj = self._session.get(m.CityObject, obj_uid)
+            if obj is not None:
+                self._ensure_same_region(obj.region_id)
         row = m.Inspection(
             id=uuid_for_code(code),
             code=code,
@@ -372,6 +471,10 @@ class DbStore:
         row = self._session.get(m.Prescription, uid)
         if row is None:
             return None
+        if row.object_id:
+            obj = self._session.get(m.CityObject, row.object_id)
+            if obj is not None:
+                self._ensure_same_region(obj.region_id)
         obj_code = self._object_code(row.object_id)
         insp_code = ""
         if row.inspection_id:
@@ -384,6 +487,10 @@ class DbStore:
         row = self._session.get(m.Prescription, uid) if uid else None
         if row is None:
             return None
+        if row.object_id:
+            obj = self._session.get(m.CityObject, row.object_id)
+            if obj is not None:
+                self._ensure_same_region(obj.region_id)
         for k, v in data.items():
             attr = {
                 "objectId": "object_id", "inspectionId": "inspection_id",
@@ -420,7 +527,11 @@ class DbStore:
             .where(m.AppUser.id == uid)
             .options(selectinload(m.AppUser.microdistricts))
         )
-        return self._map_user(row) if row else None
+        if row is None:
+            return None
+        if row.role != Role.platform_superadmin:
+            self._ensure_same_region(row.region_id)
+        return self._map_user(row)
 
     def find_user_by_login(self, login: str) -> User | None:
         row = self._session.scalar(
@@ -590,6 +701,7 @@ class DbStore:
         row = self._session.get(m.AppUser, uid) if uid else None
         if row is None:
             return None, None
+        self._ensure_same_region(row.region_id)
         creds = None
         if body.status is not None:
             row.status = body.status
@@ -614,8 +726,7 @@ class DbStore:
         row = self._session.get(m.AppUser, uid) if uid else None
         if row is None:
             return None
-        if self._region_id and row.region_id and row.region_id != self._region_id:
-            return None
+        self._ensure_same_region(row.region_id)
         if row.role in (Role.region_admin, Role.platform_superadmin):
             return None
         mapped = self._map_user(row)
@@ -638,7 +749,10 @@ class DbStore:
     def find_owner(self, wid: str) -> Owner | None:
         uid = self._resolve_uuid(m.Owner, wid)
         row = self._session.get(m.Owner, uid) if uid else None
-        return self._owner_dto(row) if row else None
+        if row is None:
+            return None
+        self._ensure_same_region(row.region_id)
+        return self._owner_dto(row)
 
     def create_owner(self, body: CreateOwnerRequest) -> Owner:
         region_id = self._region_id or "uralsk"
@@ -665,6 +779,7 @@ class DbStore:
         row = self._session.get(m.Owner, uid) if uid else None
         if row is None:
             return None
+        self._ensure_same_region(row.region_id)
         region_id = row.region_id or self._region_id or "uralsk"
         account_uid = self._resolve_owner_account(body.ownerUserId, region_id=region_id)
         row.name = body.name
@@ -775,3 +890,106 @@ class DbStore:
         from app import store as seed
 
         return seed.INSPECTION_TREND
+
+    # ── checklist template / streets / geo ─────────────────────────
+    def list_checklist_template(self, *, visible_only: bool = True) -> list[dto.ChecklistTemplateItem]:
+        q = select(m.ChecklistTemplate)
+        if self._region_id:
+            q = q.where(m.ChecklistTemplate.region_id == self._region_id)
+        if visible_only:
+            q = q.where(m.ChecklistTemplate.is_visible.is_(True))
+        q = q.order_by(m.ChecklistTemplate.sort_order, m.ChecklistTemplate.key)
+        return [mappers.checklist_template(r) for r in self._session.scalars(q).all()]
+
+    def manage_checklist_template(
+        self, items: list[dto.ChecklistTemplateManageItem]
+    ) -> list[dto.ChecklistTemplateItem]:
+        region_id = self._region_id or "uralsk"
+        for item in items:
+            row = None
+            if item.id:
+                try:
+                    uid = uuid.UUID(item.id)
+                except ValueError:
+                    uid = None
+                if uid:
+                    row = self._session.get(m.ChecklistTemplate, uid)
+                    if row is not None:
+                        self._ensure_same_region(row.region_id)
+            if row is None:
+                row = self._session.scalar(
+                    select(m.ChecklistTemplate).where(
+                        m.ChecklistTemplate.region_id == region_id,
+                        m.ChecklistTemplate.key == item.key,
+                    )
+                )
+            if row is None:
+                row = m.ChecklistTemplate(
+                    id=uuid.uuid4(),
+                    region_id=region_id,
+                    key=item.key,
+                    title_ru=item.titleRu,
+                    title_kz=item.titleKz,
+                    category=item.category,
+                    sort_order=item.sortOrder,
+                    is_visible=item.isVisible,
+                )
+                self._session.add(row)
+            else:
+                row.key = item.key
+                row.title_ru = item.titleRu
+                row.title_kz = item.titleKz
+                row.category = item.category
+                row.sort_order = item.sortOrder
+                row.is_visible = item.isVisible
+        self._session.flush()
+        return self.list_checklist_template(visible_only=False)
+
+    def list_streets(self) -> list[dto.Street]:
+        q = select(m.Street)
+        if self._region_id:
+            q = q.where(m.Street.region_id == self._region_id)
+        q = q.order_by(m.Street.name)
+        mappers.set_street_code_map(self._street_code_map())
+        return [mappers.street(r) for r in self._session.scalars(q).all()]
+
+    def create_street(self, body: dto.StreetCreate) -> dto.Street:
+        region_id = self._region_id or "uralsk"
+        code = self.next_id("st")
+        if region_id != "uralsk":
+            code = f"{region_id}-{code}"
+        row = m.Street(
+            id=uuid_for_code(code),
+            code=code,
+            region_id=region_id,
+            name=body.name.strip(),
+            district_id=body.districtId,
+            microdistrict_id=body.microdistrictId,
+        )
+        self._session.add(row)
+        self._session.flush()
+        mappers.set_street_code_map(self._street_code_map())
+        return mappers.street(row)
+
+    def get_geo_config(self, city_id: str) -> dto.GeoConfig:
+        from fastapi import HTTPException
+
+        if self._region_id and city_id != self._region_id:
+            raise HTTPException(
+                status_code=403,
+                detail={"message": "Нет доступа к данным другого города", "code": "forbidden"},
+            )
+        row = self._session.get(m.Region, city_id)
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": "Город не найден", "code": "not_found"},
+            )
+        return dto.GeoConfig(
+            hasDistricts=row.has_districts,
+            hasMicrodistricts=row.has_microdistricts,
+            hasStreets=row.has_streets,
+            addressSchema=row.address_schema or "microdistrict,street,house",
+            cityType=row.city_type,
+            oblast=row.oblast,
+        )

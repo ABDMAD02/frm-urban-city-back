@@ -24,6 +24,12 @@ class Region(BaseModel):
     locale: Locale
     mapProvider: MapProvider
     createdAt: str
+    cityType: str | None = None
+    oblast: str | None = None
+    hasDistricts: bool = True
+    hasMicrodistricts: bool = True
+    hasStreets: bool = True
+    addressSchema: str = "microdistrict,street,house"
 
 
 class Subscription(BaseModel):
@@ -80,6 +86,12 @@ class ProvisionRegionRequest(BaseModel):
     mapProvider: MapProvider = MapProvider.twogis
     plan: SubscriptionPlan = SubscriptionPlan.trial
     adminName: str = Field(min_length=1)
+    cityType: str | None = "city"
+    oblast: str | None = None
+    hasDistricts: bool = True
+    hasMicrodistricts: bool = True
+    hasStreets: bool = True
+    addressSchema: str = "microdistrict,street,house"
 
 
 class RegionStatusPatch(BaseModel):

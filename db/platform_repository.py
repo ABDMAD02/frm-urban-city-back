@@ -100,6 +100,12 @@ class PlatformStore:
             locale=Locale(row.locale.value),
             mapProvider=_map_provider(row.map_provider),
             createdAt=_d(row.created_at),
+            cityType=getattr(row, "city_type", None),
+            oblast=getattr(row, "oblast", None),
+            hasDistricts=bool(getattr(row, "has_districts", True)),
+            hasMicrodistricts=bool(getattr(row, "has_microdistricts", True)),
+            hasStreets=bool(getattr(row, "has_streets", True)),
+            addressSchema=getattr(row, "address_schema", None) or "microdistrict,street,house",
         )
 
     def _usage(self, region_id: str) -> tuple[int, int]:
@@ -177,25 +183,34 @@ class PlatformStore:
             )
         )
 
-    def _seed_region_refs(self, region_id: str) -> None:
+    def _seed_region_refs(
+        self,
+        region_id: str,
+        *,
+        has_districts: bool = True,
+        has_microdistricts: bool = True,
+    ) -> None:
         """Справочники региона: районы / микрорайоны / типы (без объектов)."""
         prefix = "" if region_id == DEFAULT_REGION else f"{region_id}-"
         id_map: dict[str, str] = {}
-        for d in DISTRICTS:
-            did = f"{prefix}{d.id}"
-            id_map[d.id] = did
-            self._session.add(m.District(id=did, region_id=region_id, name=d.name))
-        self._session.flush()
-        for md in MICRODISTRICTS:
-            mid = f"{prefix}{md.id}"
-            self._session.add(
-                m.Microdistrict(
-                    id=mid,
-                    region_id=region_id,
-                    district_id=id_map[md.districtId],
-                    name=md.name,
+        if has_districts:
+            for d in DISTRICTS:
+                did = f"{prefix}{d.id}"
+                id_map[d.id] = did
+                self._session.add(m.District(id=did, region_id=region_id, name=d.name))
+            self._session.flush()
+        if has_microdistricts:
+            for md in MICRODISTRICTS:
+                mid = f"{prefix}{md.id}"
+                district_id = id_map.get(md.districtId) if has_districts else None
+                self._session.add(
+                    m.Microdistrict(
+                        id=mid,
+                        region_id=region_id,
+                        district_id=district_id,
+                        name=md.name,
+                    )
                 )
-            )
         for t_name, t_cat in TYPES:
             self._session.add(
                 m.ObjectType(
@@ -207,6 +222,23 @@ class PlatformStore:
             )
         self._session.flush()
 
+    def _seed_checklist_template(self, region_id: str) -> None:
+        from app.address import DEFAULT_CHECKLIST_ITEMS
+
+        for item in DEFAULT_CHECKLIST_ITEMS:
+            self._session.add(
+                m.ChecklistTemplate(
+                    id=uuid.uuid4(),
+                    region_id=region_id,
+                    key=item["key"],
+                    title_ru=item["title_ru"],
+                    title_kz=item["title_kz"],
+                    category=item["category"],
+                    sort_order=item["sort_order"],
+                    is_visible=True,
+                )
+            )
+        self._session.flush()
     def _issue_region_admin(
         self, *, region_id: str, name: str, reissue: bool = False
     ) -> tuple[RegionAdminAccount, Credentials]:
@@ -355,6 +387,12 @@ class PlatformStore:
             locale=DbLocale(body.locale.value),
             map_provider=DbMapProvider(body.mapProvider.value),
             created_at=_now(),
+            city_type=body.cityType,
+            oblast=body.oblast,
+            has_districts=body.hasDistricts,
+            has_microdistricts=body.hasMicrodistricts,
+            has_streets=body.hasStreets,
+            address_schema=body.addressSchema or "microdistrict,street,house",
         )
         self._session.add(region)
         self._session.flush()
@@ -371,7 +409,12 @@ class PlatformStore:
         self._session.add(sub)
         self._session.flush()
 
-        self._seed_region_refs(region_id)
+        self._seed_region_refs(
+            region_id,
+            has_districts=body.hasDistricts,
+            has_microdistricts=body.hasMicrodistricts,
+        )
+        self._seed_checklist_template(region_id)
         account, creds = self._issue_region_admin(region_id=region_id, name=body.adminName)
         self._write_audit(
             region_id=region_id,

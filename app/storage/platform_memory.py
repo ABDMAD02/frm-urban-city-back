@@ -54,6 +54,12 @@ class MemoryPlatformStore:
                 locale=Locale.ru,
                 mapProvider=MapProvider.twogis,
                 createdAt=today,
+                cityType="city",
+                oblast="ЗКО",
+                hasDistricts=True,
+                hasMicrodistricts=True,
+                hasStreets=True,
+                addressSchema="microdistrict,street,house",
             )
         ]
         self.subscriptions: list[Subscription] = [
@@ -170,6 +176,12 @@ class MemoryPlatformStore:
             locale=body.locale,
             mapProvider=body.mapProvider,
             createdAt=today.isoformat(),
+            cityType=body.cityType,
+            oblast=body.oblast,
+            hasDistricts=body.hasDistricts,
+            hasMicrodistricts=body.hasMicrodistricts,
+            hasStreets=body.hasStreets,
+            addressSchema=body.addressSchema,
         )
         months = 1 if body.plan == SubscriptionPlan.trial else 12
         sub = Subscription(
@@ -201,8 +213,26 @@ class MemoryPlatformStore:
         self._ref_seeded.add(code)
         self._audit(code, actor, PlatformAuditAction.region_provisioned, f"plan={body.plan.value}")
         self._audit(code, actor, PlatformAuditAction.region_admin_issued, login)
-        # touch seed sizes so TYPES/DISTRICTS conceptually exist
-        _ = (DISTRICTS, MICRODISTRICTS, TYPES)
+        # Mirror checklist + geo into operational memory store
+        from app.deps import _memory
+        from app.models import GeoConfig
+
+        _memory.seed_checklist_for_region(code)
+        _memory.set_geo_config(
+            code,
+            GeoConfig(
+                hasDistricts=body.hasDistricts,
+                hasMicrodistricts=body.hasMicrodistricts,
+                hasStreets=body.hasStreets,
+                addressSchema=body.addressSchema,
+                cityType=body.cityType,
+                oblast=body.oblast,
+            ),
+        )
+        if body.hasDistricts or body.hasMicrodistricts:
+            _ = (DISTRICTS, MICRODISTRICTS, TYPES)
+        else:
+            _ = TYPES
         return region, sub, account, creds
 
     def patch_region_status(self, region_id: str, status: RegionStatus, *, actor: str) -> Region:
