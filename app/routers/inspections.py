@@ -29,10 +29,13 @@ def list_inspections(repo: StoreDep, user: User = Depends(get_current_user)):
 def add_inspection(oid: str, body: CreateInspectionRequest, repo: StoreDep, user: User = Depends(get_current_user)):
     obj = repo.find_object(oid)
     if obj is None:
-        raise HTTPException(404, "Объект не найден")
+        raise HTTPException(404, detail={"message": "Объект не найден", "code": "not_found"})
     ensure_object_access(repo, user, oid)
     if not body.photos:
-        raise HTTPException(400, "Фотофиксация обязательна: приложите минимум одно фото")
+        raise HTTPException(
+            400,
+            detail={"message": "Фотофиксация обязательна: приложите минимум одно фото", "code": "bad_request"},
+        )
 
     insp = body.inspection
     insp.objectId = oid
@@ -43,7 +46,13 @@ def add_inspection(oid: str, body: CreateInspectionRequest, repo: StoreDep, user
     has_issues = insp.result == InspectionResult.has_remarks
     outcome = ObjectStatus.has_remarks if has_issues else ObjectStatus.compliant
     if not can_transition(obj.status, outcome):
-        raise HTTPException(409, f"Недопустимый переход статуса: {obj.status.value} → {outcome.value}")
+        raise HTTPException(
+            409,
+            detail={
+                "message": f"Недопустимый переход статуса: {obj.status.value} → {outcome.value}",
+                "code": "conflict",
+            },
+        )
     obj = repo.set_object_status(oid, outcome)
 
     repo.append_history(HistoryEvent(
@@ -85,7 +94,7 @@ _REINSPECT = {
 def reinspect(oid: str, body: ReinspectionRequest, repo: StoreDep, user: User = Depends(get_current_user)):
     obj = repo.find_object(oid)
     if obj is None:
-        raise HTTPException(404, "Объект не найден")
+        raise HTTPException(404, detail={"message": "Объект не найден", "code": "not_found"})
     ensure_object_access(repo, user, oid)
     if obj.status == ObjectStatus.prescription_issued and can_transition(
         ObjectStatus.prescription_issued, ObjectStatus.awaiting_reinspection
@@ -93,7 +102,13 @@ def reinspect(oid: str, body: ReinspectionRequest, repo: StoreDep, user: User = 
         obj = repo.set_object_status(oid, ObjectStatus.awaiting_reinspection)
     target, note = _REINSPECT[body.result]
     if not can_transition(obj.status, target):
-        raise HTTPException(409, f"Недопустимый переход статуса: {obj.status.value} → {target.value}")
+        raise HTTPException(
+            409,
+            detail={
+                "message": f"Недопустимый переход статуса: {obj.status.value} → {target.value}",
+                "code": "conflict",
+            },
+        )
     obj = repo.set_object_status(oid, target)
     repo.append_history(HistoryEvent(
         id="", objectId=oid, type=HistoryType.reinspection,
