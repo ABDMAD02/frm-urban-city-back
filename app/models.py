@@ -1,6 +1,7 @@
 """Pydantic-схемы — зеркало доменных сущностей фронта + тела запросов/ответов API."""
 from __future__ import annotations
-from pydantic import BaseModel, Field, EmailStr
+import re
+from pydantic import BaseModel, Field, EmailStr, field_validator
 from .enums import (
     Role, AccountStatus, ObjectStatus, InspectionResult, ReinspectionResult,
     PrescriptionStatus, LegalForm, ChecklistValue, PhotoKind, HistoryType,
@@ -240,6 +241,30 @@ class CreateOwnerRequest(BaseModel):
     bin: str | None = None
     email: str | None = None
     ownerUserId: str | None = None
+
+    @field_validator("bin", mode="before")
+    @classmethod
+    def normalize_bin(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if not re.fullmatch(r"[0-9]{12}", text):
+            raise ValueError("БИН/ИИН должен состоять из 12 цифр")
+        return text
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", text, flags=re.IGNORECASE):
+            raise ValueError("Некорректный email")
+        return text
 
 
 # ── Предписания — действия ────────────────────────────────────────
