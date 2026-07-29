@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+import json
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from . import config
 from .deps import init_database
@@ -109,12 +110,25 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(RequestValidationError)
 async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = []
+    for err in exc.errors():
+        clean = {}
+        for key, value in err.items():
+            if key == "ctx" and isinstance(value, dict):
+                clean[key] = {k: (str(v) if not isinstance(v, (str, int, float, bool, type(None))) else v) for k, v in value.items()}
+            else:
+                try:
+                    json.dumps(value)
+                    clean[key] = value
+                except TypeError:
+                    clean[key] = str(value)
+        errors.append(clean)
     return JSONResponse(
         status_code=422,
         content={
             "message": "Ошибка валидации запроса",
             "code": "validation_error",
-            "errors": exc.errors(),
+            "errors": errors,
         },
     )
 
@@ -127,6 +141,24 @@ async def database_operational_error_handler(request: Request, exc: OperationalE
             "message": "База данных временно недоступна (лимит соединений или сеть)",
             "code": "database_unavailable",
         },
+    )
+
+
+@app.exception_handler(IntegrityError)
+async def database_integrity_error_handler(request: Request, exc: IntegrityError):
+    """DB check/unique violations → 422 instead of opaque 500."""
+    raw = str(getattr(exc, "orig", None) or exc)
+    if "bin_format" in raw:
+        message, code = "БИН/ИИН должен состоять из 12 цифр", "invalid_bin"
+    elif "email_format" in raw:
+        message, code = "Некорректный email", "invalid_email"
+    elif "unique" in raw.lower() or "duplicate" in raw.lower():
+        message, code = "Запись с такими данными уже существует", "duplicate"
+    else:
+        message, code = "Нарушение ограничения данных", "integrity_error"
+    return JSONResponse(
+        status_code=422,
+        content={"message": message, "code": code},
     )
 
 

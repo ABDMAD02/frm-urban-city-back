@@ -200,6 +200,25 @@ bad_link = c.post(
 )
 check("POST /owners ownerUserId=urbanist → 422", bad_link.status_code == 422)
 
+bad_bin = c.post(
+    f"{B}/owners",
+    json={
+        "name": "ТОО Bad BIN",
+        "legalForm": "ТОО",
+        "bin": "123123",
+        "phone": "87086272471",
+    },
+    headers=admin_h,
+)
+check(
+    "POST /owners invalid bin → 422",
+    bad_bin.status_code == 422
+    and (
+        bad_bin.json().get("code") in {"invalid_bin", "validation_error"}
+        or "12" in str(bad_bin.json())
+    ),
+)
+
 # owner scope: my businesses + per-business filters + foreign business denied
 owner_login = c.post(f"{B}/auth/v2/login", json={"email": "d.saparov@uralsk.kz", "password": "UC-0002-u2"})
 check("POST /auth/v2/login owner", owner_login.status_code == 200 and "access_token" in owner_login.json())
