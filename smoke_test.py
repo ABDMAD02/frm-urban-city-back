@@ -262,6 +262,137 @@ check("GET /audit as urbanist → 403", audit_forbidden.status_code == 403)
 audit_admin = c.get(f"{B}/audit", headers=admin_h)
 check("GET /audit as region_admin → 200", audit_admin.status_code == 200)
 
+# checklist template + geo + streets
+cl = c.get(f"{B}/checklist-template", headers=admin_h)
+check(
+    "GET /checklist-template → 6 visible",
+    cl.status_code == 200 and len(cl.json()) == 6 and all(i["isVisible"] for i in cl.json()),
+)
+hide = c.post(
+    f"{B}/checklist-template/manage",
+    headers=admin_h,
+    json={
+        "items": [
+            {
+                "id": cl.json()[0]["id"],
+                "key": cl.json()[0]["key"],
+                "titleRu": cl.json()[0]["titleRu"],
+                "titleKz": cl.json()[0].get("titleKz", ""),
+                "category": cl.json()[0].get("category", ""),
+                "sortOrder": cl.json()[0].get("sortOrder", 1),
+                "isVisible": False,
+            }
+        ]
+    },
+)
+check("POST /checklist-template/manage hide → 200", hide.status_code == 200)
+cl2 = c.get(f"{B}/checklist-template", headers=admin_h)
+check("GET /checklist-template after hide → 5", cl2.status_code == 200 and len(cl2.json()) == 5)
+# restore visibility for other tests
+c.post(
+    f"{B}/checklist-template/manage",
+    headers=admin_h,
+    json={
+        "items": [
+            {
+                "id": cl.json()[0]["id"],
+                "key": cl.json()[0]["key"],
+                "titleRu": cl.json()[0]["titleRu"],
+                "titleKz": cl.json()[0].get("titleKz", ""),
+                "category": cl.json()[0].get("category", ""),
+                "sortOrder": cl.json()[0].get("sortOrder", 1),
+                "isVisible": True,
+            }
+        ]
+    },
+)
+
+geo = c.get(f"{B}/cities/uralsk/geo-config", headers=admin_h)
+check(
+    "GET /cities/uralsk/geo-config",
+    geo.status_code == 200
+    and geo.json().get("addressSchema") == "microdistrict,street,house"
+    and geo.json().get("hasStreets") is True,
+)
+geo_forbidden = c.get(f"{B}/cities/othercity/geo-config", headers=admin_h)
+check("GET geo-config other city → 403", geo_forbidden.status_code == 403)
+
+st = c.post(
+    f"{B}/streets",
+    headers=admin_h,
+    json={"name": "Кунаева", "microdistrictId": "m1"},
+)
+check("POST /streets → 201", st.status_code == 201 and st.json()["name"] == "Кунаева")
+sts = c.get(f"{B}/streets", headers=admin_h)
+check("GET /streets → >=1", sts.status_code == 200 and len(sts.json()) >= 1)
+
+md_free = c.post(
+    f"{B}/microdistricts/manage",
+    headers=admin_h,
+    json={"name": "Без района", "districtId": None},
+)
+check("POST microdistrict without district → 201", md_free.status_code == 201 and md_free.json().get("districtId") is None)
+
+addr_obj = c.post(
+    f"{B}/objects",
+    headers=admin_h,
+    json={
+        "name": "Адрес-тест",
+        "type": "Магазин",
+        "lat": 51.2,
+        "lng": 51.3,
+        "microdistrictId": "m1",
+        "streetId": st.json()["id"],
+        "house": "12",
+    },
+)
+check(
+    "POST /objects builds address",
+    addr_obj.status_code == 201
+    and "Кунаева" in addr_obj.json().get("address", "")
+    and "12" in addr_obj.json().get("address", ""),
+)
+c.delete(f"{B}/objects/{addr_obj.json()['id']}", headers=admin_h)
+
+# platform provision creates city + 6 checklist items
+from app.user_helpers import PLATFORM_SUPERADMIN_EMAIL, PLATFORM_SUPERADMIN_PASSWORD
+
+sa_login = c.post(
+    f"{B}/auth/v2/login",
+    json={"email": PLATFORM_SUPERADMIN_EMAIL, "password": PLATFORM_SUPERADMIN_PASSWORD},
+)
+check("POST /auth/v2/login platform_superadmin", sa_login.status_code == 200)
+sa_h = {"Authorization": f"Bearer {sa_login.json()['access_token']}"}
+prov = c.post(
+    f"{B}/platform/regions",
+    headers=sa_h,
+    json={
+        "code": "smoke-city",
+        "name": "Smoke City",
+        "adminName": "Smoke Admin",
+        "hasDistricts": False,
+        "hasMicrodistricts": False,
+        "hasStreets": True,
+        "addressSchema": "street,house",
+        "cityType": "city",
+        "oblast": "ЗКО",
+    },
+)
+check(
+    "POST /platform/regions → 201 + geo",
+    prov.status_code == 201
+    and prov.json()["region"]["id"] == "smoke-city"
+    and prov.json()["region"].get("hasDistricts") is False
+    and len(prov.json()["region"].get("addressSchema", "")) > 0,
+)
+# operational store checklist seeded for new city (memory parity)
+from app.deps import _memory
+
+check(
+    "provision seeds 6 checklist items",
+    len(_memory._checklist.get("smoke-city", [])) == 6,
+)
+
 # отправка предписания по email
 pid = c.get(f"{B}/prescriptions", headers=admin_h).json()[0]["id"]
 snd = c.post(f"{B}/prescriptions/{pid}/send", json={}, headers=admin_h)

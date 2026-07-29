@@ -16,7 +16,7 @@ class District(BaseModel):
 
 class Microdistrict(BaseModel):
     id: str
-    districtId: str
+    districtId: str | None = None
     name: str
 
 
@@ -113,9 +113,12 @@ class CityObject(BaseModel):
     address: str
     lat: float
     lng: float
-    districtId: str
-    microdistrictId: str
-    street: str
+    districtId: str | None = None
+    microdistrictId: str | None = None
+    street: str | None = None
+    streetId: str | None = None
+    house: str | None = None
+    apartment: str | None = None
     ownerId: str
     status: ObjectStatus
     responsible: str
@@ -159,6 +162,9 @@ class CreateObjectRequest(BaseModel):
     districtId: str | None = None
     microdistrictId: str | None = None
     street: str | None = None
+    streetId: str | None = None
+    house: str | None = None
+    apartment: str | None = None
     ownerId: str | None = None
 
 
@@ -178,6 +184,12 @@ class ObjectPatch(BaseModel):
     ownerId: str | None = None
     responsible: str | None = None
     status: ObjectStatus | None = None
+    districtId: str | None = None
+    microdistrictId: str | None = None
+    street: str | None = None
+    streetId: str | None = None
+    house: str | None = None
+    apartment: str | None = None
 
 
 class UpdateObjectRequest(BaseModel):
@@ -336,10 +348,56 @@ class DistrictCreate(BaseModel):
 
 
 class MicrodistrictCreate(BaseModel):
-    districtId: str
+    districtId: str | None = None
     name: str
 
 
 class ObjectTypeCreate(BaseModel):
     type: str
     category: str | None = None
+
+
+class ChecklistTemplateItem(BaseModel):
+    id: str
+    key: str
+    titleRu: str
+    titleKz: str = ""
+    category: str = ""
+    sortOrder: int = 0
+    isVisible: bool = True
+
+
+class ChecklistTemplateManageItem(BaseModel):
+    id: str | None = None
+    key: str
+    titleRu: str
+    titleKz: str = ""
+    category: str = ""
+    sortOrder: int = 0
+    isVisible: bool = True
+
+
+class ChecklistTemplateManageRequest(BaseModel):
+    items: list[ChecklistTemplateManageItem] = Field(default_factory=list)
+
+
+class Street(BaseModel):
+    id: str
+    name: str
+    districtId: str | None = None
+    microdistrictId: str | None = None
+
+
+class StreetCreate(BaseModel):
+    name: str
+    districtId: str | None = None
+    microdistrictId: str | None = None
+
+
+class GeoConfig(BaseModel):
+    hasDistricts: bool
+    hasMicrodistricts: bool
+    hasStreets: bool
+    addressSchema: str
+    cityType: str | None = None
+    oblast: str | None = None

@@ -86,12 +86,12 @@ class Microdistrict(Base):
     region_id: Mapped[str] = mapped_column(
         Text, ForeignKey("region.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    district_id: Mapped[str] = mapped_column(
-        Text, ForeignKey("district.id", ondelete="RESTRICT"), nullable=False
+    district_id: Mapped[Optional[str]] = mapped_column(
+        Text, ForeignKey("district.id", ondelete="RESTRICT"), nullable=True
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
 
-    district: Mapped[District] = relationship(back_populates="microdistricts")
+    district: Mapped[Optional[District]] = relationship(back_populates="microdistricts")
 
 
 # ── Платформа (control plane) ─────────────────────────────────────
@@ -106,6 +106,14 @@ class Region(Base):
     locale: Mapped[Locale] = mapped_column(pg_enum(Locale), nullable=False, server_default="ru")
     map_provider: Mapped[MapProvider] = mapped_column(
         pg_enum(MapProvider), nullable=False, server_default="2gis"
+    )
+    city_type: Mapped[Optional[str]] = mapped_column(Text)
+    oblast: Mapped[Optional[str]] = mapped_column(Text)
+    has_districts: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    has_microdistricts: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    has_streets: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    address_schema: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="microdistrict,street,house"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -194,6 +202,43 @@ class ObjectType(Base):
     category: Mapped[Optional[str]] = mapped_column(Text)  # 'Торговля'
 
 
+# ── Улицы ─────────────────────────────────────────────────────────
+class Street(Base):
+    __tablename__ = "street"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    code: Mapped[Optional[str]] = mapped_column(Text, unique=True)
+    region_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("region.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    district_id: Mapped[Optional[str]] = mapped_column(
+        Text, ForeignKey("district.id", ondelete="SET NULL")
+    )
+    microdistrict_id: Mapped[Optional[str]] = mapped_column(
+        Text, ForeignKey("microdistrict.id", ondelete="SET NULL")
+    )
+
+
+# ── Шаблон дизайн-кода региона ────────────────────────────────────
+class ChecklistTemplate(Base):
+    __tablename__ = "checklist_template"
+    __table_args__ = (
+        UniqueConstraint("region_id", "key", name="uq_checklist_template_region_key"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    region_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("region.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    key: Mapped[str] = mapped_column(Text, nullable=False)
+    title_ru: Mapped[str] = mapped_column(Text, nullable=False)
+    title_kz: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    category: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    is_visible: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+
+
 # ── Пользователи (аккаунты входа) ─────────────────────────────────
 class AppUser(Base):
     __tablename__ = "app_user"
@@ -269,6 +314,11 @@ class CityObject(Base):
         Text, ForeignKey("microdistrict.id", ondelete="RESTRICT")
     )
     street: Mapped[Optional[str]] = mapped_column(Text)
+    street_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("street.id", ondelete="SET NULL")
+    )
+    house: Mapped[Optional[str]] = mapped_column(Text)
+    apartment: Mapped[Optional[str]] = mapped_column(Text)
     owner_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("owner.id", ondelete="RESTRICT")
     )

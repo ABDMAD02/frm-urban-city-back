@@ -1,9 +1,16 @@
 """In-memory реализация хранилища (обёртка над app/store.py)."""
 from __future__ import annotations
 
+import uuid
+
+from fastapi import HTTPException
+
 from app import config, store
+from app.address import DEFAULT_ADDRESS_SCHEMA, DEFAULT_CHECKLIST_ITEMS, build_address
 from app.enums import HistoryType, ObjectStatus
 from app.models import (
+    ChecklistTemplateItem,
+    ChecklistTemplateManageItem,
     CityObject,
     CreateObjectRequest,
     CreateOwnerRequest,
@@ -11,6 +18,7 @@ from app.models import (
     Credentials,
     District,
     DistrictCreate,
+    GeoConfig,
     HistoryEvent,
     Inspection,
     Microdistrict,
@@ -19,6 +27,8 @@ from app.models import (
     Owner,
     Photo,
     Prescription,
+    Street,
+    StreetCreate,
     TrendPoint,
     UpdateUserRequest,
     User,
@@ -26,17 +36,67 @@ from app.models import (
 from app.user_helpers import login_for, temp_password
 
 
+def _default_checklist(region_id: str = "uralsk") -> list[ChecklistTemplateItem]:
+    return [
+        ChecklistTemplateItem(
+            id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{region_id}:{item['key']}")),
+            key=item["key"],
+            titleRu=item["title_ru"],
+            titleKz=item["title_kz"],
+            category=item["category"],
+            sortOrder=item["sort_order"],
+            isVisible=True,
+        )
+        for item in DEFAULT_CHECKLIST_ITEMS
+    ]
+
+
 class MemoryStore:
     def __init__(self) -> None:
         from app.passwords import hash_password
         from app.user_helpers import PLATFORM_SUPERADMIN_PASSWORD, temp_password
 
+        self._region_id: str | None = "uralsk"
         self._password_hashes: dict[str, str] = {}
         for u in store.USERS:
             if u.role.value == "platform_superadmin":
                 self._password_hashes[u.id] = hash_password(PLATFORM_SUPERADMIN_PASSWORD)
             else:
                 self._password_hashes[u.id] = hash_password(temp_password(u.id))
+        self._checklist: dict[str, list[ChecklistTemplateItem]] = {
+            "uralsk": _default_checklist("uralsk"),
+        }
+        self._streets: dict[str, list[Street]] = {"uralsk": []}
+        self._geo: dict[str, GeoConfig] = {
+            "uralsk": GeoConfig(
+                hasDistricts=True,
+                hasMicrodistricts=True,
+                hasStreets=True,
+                addressSchema=DEFAULT_ADDRESS_SCHEMA,
+                cityType="city",
+                oblast="ЗКО",
+            )
+        }
+
+    def set_region(self, region_id: str | None) -> None:
+        self._region_id = region_id
+
+    def _ensure_same_region(self, row_region_id: str | None) -> None:
+        if self._region_id and row_region_id and row_region_id != self._region_id:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "message": "Нет доступа к данным другого города",
+                    "code": "forbidden",
+                },
+            )
+
+    def seed_checklist_for_region(self, region_id: str) -> None:
+        self._checklist[region_id] = _default_checklist(region_id)
+        self._streets.setdefault(region_id, [])
+
+    def set_geo_config(self, region_id: str, geo: GeoConfig) -> None:
+        self._geo[region_id] = geo
 
     def commit(self) -> None:
         pass
@@ -55,14 +115,51 @@ class MemoryStore:
 
     def create_object(self, body: CreateObjectRequest, actor: User) -> CityObject:
         oid = store.next_id("o")
+        street_name = body.street
+        if body.streetId:
+            st = next(
+                (s for s in self._streets.get(self._region_id or "uralsk", []) if s.id == body.streetId),
+                None,
+            )
+            if st:
+                street_name = st.name
+        md_name = None
+        d_name = None
+        if body.microdistrictId:
+            md = next((m for m in store.MICRODISTRICTS if m.id == body.microdistrictId), None)
+            md_name = md.name if md else None
+        if body.districtId:
+            d = next((d for d in store.DISTRICTS if d.id == body.districtId), None)
+            d_name = d.name if d else None
+        geo = self._geo.get(self._region_id or "uralsk")
+        schema = geo.addressSchema if geo else DEFAULT_ADDRESS_SCHEMA
+        address = body.address or build_address(
+            address_schema=schema,
+            district_name=d_name,
+            microdistrict_name=md_name,
+            street_name=street_name,
+            house=body.house,
+            apartment=body.apartment,
+        )
         obj = CityObject(
-            id=oid, name=body.name, type=body.type,
-            category=body.category or "—", address=body.address or "—",
-            lat=body.lat, lng=body.lng,
-            districtId=body.districtId or "d1", microdistrictId=body.microdistrictId or "m1",
-            street=body.street or "—", ownerId=body.ownerId or "w4",
-            status=ObjectStatus.new, responsible=actor.name,
-            createdAt=config.today_str(), updatedAt=config.today_str(),
+            id=oid,
+            name=body.name,
+            type=body.type,
+            category=body.category or "—",
+            address=address,
+            lat=body.lat,
+            lng=body.lng,
+            districtId=body.districtId,
+            microdistrictId=body.microdistrictId,
+            street=street_name,
+            streetId=body.streetId,
+            house=body.house,
+            apartment=body.apartment,
+            ownerId=body.ownerId or "w4",
+            status=ObjectStatus.new,
+            responsible=actor.name,
+            createdAt=config.today_str(),
+            updatedAt=config.today_str(),
         )
         store.OBJECTS.append(obj)
         self.append_history(HistoryEvent(
@@ -354,3 +451,63 @@ class MemoryStore:
 
     def inspection_trend(self) -> list[TrendPoint]:
         return store.INSPECTION_TREND
+
+    def list_checklist_template(self, *, visible_only: bool = True) -> list[ChecklistTemplateItem]:
+        region_id = self._region_id or "uralsk"
+        items = list(self._checklist.get(region_id, []))
+        if visible_only:
+            items = [i for i in items if i.isVisible]
+        return sorted(items, key=lambda i: (i.sortOrder, i.key))
+
+    def manage_checklist_template(
+        self, items: list[ChecklistTemplateManageItem]
+    ) -> list[ChecklistTemplateItem]:
+        region_id = self._region_id or "uralsk"
+        current = {i.key: i for i in self._checklist.get(region_id, [])}
+        for item in items:
+            existing = None
+            if item.id:
+                existing = next((i for i in current.values() if i.id == item.id), None)
+            if existing is None:
+                existing = current.get(item.key)
+            updated = ChecklistTemplateItem(
+                id=existing.id if existing else str(uuid.uuid4()),
+                key=item.key,
+                titleRu=item.titleRu,
+                titleKz=item.titleKz,
+                category=item.category,
+                sortOrder=item.sortOrder,
+                isVisible=item.isVisible,
+            )
+            current[item.key] = updated
+        self._checklist[region_id] = list(current.values())
+        return self.list_checklist_template(visible_only=False)
+
+    def list_streets(self) -> list[Street]:
+        region_id = self._region_id or "uralsk"
+        return list(self._streets.get(region_id, []))
+
+    def create_street(self, body: StreetCreate) -> Street:
+        region_id = self._region_id or "uralsk"
+        street = Street(
+            id=store.next_id("st"),
+            name=body.name.strip(),
+            districtId=body.districtId,
+            microdistrictId=body.microdistrictId,
+        )
+        self._streets.setdefault(region_id, []).append(street)
+        return street
+
+    def get_geo_config(self, city_id: str) -> GeoConfig:
+        if self._region_id and city_id != self._region_id:
+            raise HTTPException(
+                status_code=403,
+                detail={"message": "Нет доступа к данным другого города", "code": "forbidden"},
+            )
+        geo = self._geo.get(city_id)
+        if geo is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": "Город не найден", "code": "not_found"},
+            )
+        return geo

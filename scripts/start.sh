@@ -24,7 +24,7 @@ ensure_schema() {
 from sqlalchemy import inspect, text
 from db.base import get_engine
 
-HEAD_REVISION = "0004"
+HEAD_REVISION = "0005"
 engine = get_engine()
 insp = inspect(engine)
 tables = set(insp.get_table_names())

@@ -40,14 +40,20 @@ def get_store(
             from app import security
 
             uid = security.decode(creds.credentials, "access")
+            # Lookup without region filter (multi-tenant login), then scope.
+            repo.set_region(None)
             user = repo.find_user_by_id(uid)
             if user is not None:
                 if user.role == Role.platform_superadmin:
                     repo.set_region(None)
                 elif user.regionId:
                     repo.set_region(user.regionId)
+                else:
+                    repo.set_region("uralsk")
+            else:
+                repo.set_region("uralsk")
         except Exception:
-            pass
+            repo.set_region("uralsk")
     try:
         yield repo
         repo.commit()

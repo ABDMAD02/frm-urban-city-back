@@ -15,6 +15,7 @@ from ..security import (
 from ..models import (
     Owner, CreateOwnerRequest, District, DistrictCreate, Microdistrict,
     MicrodistrictCreate, ObjectTypeCreate, Photo, HistoryEvent, ObjectVersion, User,
+    ChecklistTemplateItem, ChecklistTemplateManageRequest, Street, StreetCreate, GeoConfig,
 )
 from ..enums import PhotoKind
 
@@ -160,3 +161,46 @@ def list_history(repo: StoreDep, user: User = Depends(get_current_user)):
 def list_versions(repo: StoreDep, user: User = Depends(get_current_user)):
     allowed = accessible_object_ids(repo, user)
     return [v for v in repo.list_versions() if v.objectId in allowed]
+
+
+@router.get(
+    "/checklist-template",
+    response_model=list[ChecklistTemplateItem],
+    summary="Шаблон чеклиста дизайн-кода (видимые пункты)",
+)
+def list_checklist_template(repo: StoreDep, user: User = Depends(get_current_user)):
+    return repo.list_checklist_template(visible_only=True)
+
+
+@router.post(
+    "/checklist-template/manage",
+    response_model=list[ChecklistTemplateItem],
+    summary="Управление шаблоном чеклиста (upsert / hide / reorder)",
+)
+def manage_checklist_template(
+    body: ChecklistTemplateManageRequest,
+    repo: StoreDep,
+    user: User = Depends(require_region_admin),
+):
+    return repo.manage_checklist_template(body.items)
+
+
+@router.get("/streets", response_model=list[Street], summary="Улицы региона")
+def list_streets(repo: StoreDep, user: User = Depends(get_current_user)):
+    return repo.list_streets()
+
+
+@router.post("/streets", response_model=Street, status_code=201, summary="Создать улицу")
+def create_street(
+    body: StreetCreate, repo: StoreDep, user: User = Depends(require_region_admin)
+):
+    return repo.create_street(body)
+
+
+@router.get(
+    "/cities/{city_id}/geo-config",
+    response_model=GeoConfig,
+    summary="Гео-конфиг города (схема адреса, флаги)",
+)
+def get_geo_config(city_id: str, repo: StoreDep, user: User = Depends(get_current_user)):
+    return repo.get_geo_config(city_id)

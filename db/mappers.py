@@ -78,9 +78,12 @@ def city_object(row: orm.CityObject) -> dto.CityObject:
         address=row.address or "—",
         lat=row.lat,
         lng=row.lng,
-        districtId=row.district_id or "d1",
-        microdistrictId=row.microdistrict_id or "m1",
-        street=row.street or "—",
+        districtId=row.district_id,
+        microdistrictId=row.microdistrict_id,
+        street=row.street,
+        streetId=_street_code(row.street_id) if getattr(row, "street_id", None) else None,
+        house=getattr(row, "house", None),
+        apartment=getattr(row, "apartment", None),
         ownerId=_owner_code(row.owner_id) if row.owner_id else "w4",
         status=ObjectStatus(row.status.value),
         responsible=row.responsible or "",
@@ -91,11 +94,44 @@ def city_object(row: orm.CityObject) -> dto.CityObject:
 
 # Заполняется репозиторием: owner uuid → code
 _OWNER_UUID_TO_CODE: dict[uuid.UUID, str] = {}
+_STREET_UUID_TO_CODE: dict[uuid.UUID, str] = {}
 
 
 def set_owner_code_map(mapping: dict[uuid.UUID, str]) -> None:
     global _OWNER_UUID_TO_CODE
     _OWNER_UUID_TO_CODE = mapping
+
+
+def set_street_code_map(mapping: dict[uuid.UUID, str]) -> None:
+    global _STREET_UUID_TO_CODE
+    _STREET_UUID_TO_CODE = mapping
+
+
+def _street_code(uid: uuid.UUID | None) -> str | None:
+    if uid is None:
+        return None
+    return _STREET_UUID_TO_CODE.get(uid) or str(uid)
+
+
+def checklist_template(row: orm.ChecklistTemplate) -> dto.ChecklistTemplateItem:
+    return dto.ChecklistTemplateItem(
+        id=str(row.id),
+        key=row.key,
+        titleRu=row.title_ru,
+        titleKz=row.title_kz or "",
+        category=row.category or "",
+        sortOrder=row.sort_order,
+        isVisible=row.is_visible,
+    )
+
+
+def street(row: orm.Street) -> dto.Street:
+    return dto.Street(
+        id=_code(row),
+        name=row.name,
+        districtId=row.district_id,
+        microdistrictId=row.microdistrict_id,
+    )
 
 
 def _owner_code(uid: uuid.UUID | None) -> str:
