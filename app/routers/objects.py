@@ -99,7 +99,7 @@ def bulk_delete_objects(
 def get_object(oid: str, repo: StoreDep, user: User = Depends(get_current_user)):
     obj = repo.find_object(oid)
     if obj is None or obj.status == ObjectStatus.archived:
-        raise HTTPException(404, "Объект не найден")
+        raise HTTPException(404, detail={"message": "Объект не найден", "code": "not_found"})
     ensure_object_access(repo, user, obj.id)
     return obj
 
@@ -108,11 +108,17 @@ def get_object(oid: str, repo: StoreDep, user: User = Depends(get_current_user))
 def update_object(oid: str, body: UpdateObjectRequest, repo: StoreDep, user: User = Depends(get_current_user)):
     obj = repo.find_object(oid)
     if obj is None or obj.status == ObjectStatus.archived:
-        raise HTTPException(404, "Объект не найден")
+        raise HTTPException(404, detail={"message": "Объект не найден", "code": "not_found"})
     ensure_object_access(repo, user, obj.id)
     patch = body.patch
     if patch.status is not None and not can_transition(obj.status, patch.status):
-        raise HTTPException(409, f"Недопустимый переход статуса: {obj.status.value} → {patch.status.value}")
+        raise HTTPException(
+            409,
+            detail={
+                "message": f"Недопустимый переход статуса: {obj.status.value} → {patch.status.value}",
+                "code": "conflict",
+            },
+        )
     updated = repo.update_object(oid, patch, body.note, user.name)
     return updated
 
@@ -127,7 +133,7 @@ def delete_object(
     repo: StoreDep,
     user: User = Depends(require_region_admin),
 ):
-    """Мягкое удаление: status → archived (физический DELETE в БД запрещён триггером)."""
+    """Мягкое удаление: status → archived (как bulk-delete)."""
     if not _soft_delete_object(repo, oid, user):
         raise HTTPException(404, detail={"message": "Объект не найден", "code": "not_found"})
     return None
@@ -145,9 +151,17 @@ def search(repo: StoreDep, q: str = Query(...), user: User = Depends(get_current
 
 
 @router.get("/geocode/reverse", response_model=GeocodeResult, summary="Адрес по координатам")
-def reverse_geocode(repo: StoreDep, lat: float = Query(...), lng: float = Query(...)):
+def reverse_geocode(
+    repo: StoreDep,
+    lat: float = Query(...),
+    lng: float = Query(...),
+    user: User = Depends(get_current_user),
+):
     try:
         md = repo.first_microdistrict()
     except LookupError as exc:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"message": str(exc), "code": "service_unavailable"},
+        ) from exc
     return GeocodeResult(address="—", street="—", districtId=md.districtId, microdistrictId=md.id)

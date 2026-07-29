@@ -73,14 +73,37 @@ for module in _ROUTERS:
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    """Платформенные ошибки всегда отдаются как плоский {message, code}."""
+    """Все HTTPException → плоский {message, code} со стабильными code."""
+    _CODES = {
+        400: "bad_request",
+        401: "unauthorized",
+        403: "forbidden",
+        404: "not_found",
+        405: "method_not_allowed",
+        409: "conflict",
+        422: "validation_error",
+        429: "too_many_requests",
+        500: "internal_error",
+        502: "bad_gateway",
+        503: "service_unavailable",
+    }
     if isinstance(exc.detail, dict) and "message" in exc.detail and "code" in exc.detail:
         return JSONResponse(status_code=exc.status_code, content=exc.detail)
-    if isinstance(exc.detail, dict):
-        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+    if isinstance(exc.detail, dict) and "message" in exc.detail:
+        content = {
+            "message": str(exc.detail["message"]),
+            "code": exc.detail.get("code") or _CODES.get(exc.status_code, f"http_{exc.status_code}"),
+        }
+        for key, value in exc.detail.items():
+            if key not in content:
+                content[key] = value
+        return JSONResponse(status_code=exc.status_code, content=content)
     return JSONResponse(
         status_code=exc.status_code,
-        content={"message": str(exc.detail), "code": f"http_{exc.status_code}"},
+        content={
+            "message": str(exc.detail),
+            "code": _CODES.get(exc.status_code, f"http_{exc.status_code}"),
+        },
     )
 
 

@@ -1,10 +1,7 @@
 """JWT и извлечение текущего пользователя.
 
-Демо-упрощения (осознанно, как в прототипе):
-- login принимает любой email/пароль и выдаёт токены под подходящего сид-пользователя;
-- get_current_user НЕ обязателен: если токена нет (веб пока ходит по куке),
-  подставляется демо-пользователь region_admin, чтобы чтения работали.
-В проде: обязательная проверка токена, хэш паролей (bcrypt/argon2), реальный скоуп.
+Все операционные ручки требуют валидный access JWT.
+Без токена / битый токен / неизвестный user → 401.
 """
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
@@ -22,6 +19,13 @@ from .platform_models import AdminUser
 _bearer = HTTPBearer(auto_error=False)
 
 
+def _unauthorized(message: str = "Требуется авторизация") -> None:
+    raise HTTPException(
+        status.HTTP_401_UNAUTHORIZED,
+        detail={"message": message, "code": "unauthorized"},
+    )
+
+
 def _encode(sub: str, kind: str, ttl: timedelta) -> str:
     payload = {"sub": sub, "type": kind, "exp": datetime.now(timezone.utc) + ttl}
     return jwt.encode(payload, config.JWT_SECRET, algorithm=config.JWT_ALG)
@@ -37,36 +41,29 @@ def decode(token: str, expected: str) -> str:
     try:
         payload = jwt.decode(token, config.JWT_SECRET, algorithms=[config.JWT_ALG])
     except jwt.PyJWTError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Недействительный токен")
+        _unauthorized("Недействительный токен")
     if payload.get("type") != expected:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Неверный тип токена")
+        _unauthorized("Неверный тип токена")
     return payload["sub"]
-
-
-def _demo_user(repo: StoreDep) -> User:
-    admin = repo.find_region_admin()
-    if admin is not None:
-        return admin
-    users = repo.list_users()
-    if users:
-        return users[0]
-    raise HTTPException(
-        status.HTTP_503_SERVICE_UNAVAILABLE,
-        "База не инициализирована: нет пользователей (запустите seed)",
-    )
 
 
 def get_current_user(
     repo: StoreDep,
     creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ) -> User:
+    """Обязательный access JWT. Без демо-подстановки."""
     if creds is None:
-        return _demo_user(repo)
+        _unauthorized()
     uid = decode(creds.credentials, "access")
     user = repo.find_user_by_id(uid)
-    if user is not None:
-        return user
-    return _demo_user(repo)
+    if user is None:
+        _unauthorized("Недействительная сессия")
+    if user.status is not None and user.status.value == "blocked":
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={"message": "Аккаунт заблокирован", "code": "account_blocked"},
+        )
+    return user
 
 
 def require_platform_token(
@@ -74,30 +71,12 @@ def require_platform_token(
 ) -> str:
     """Возвращает sub из access JWT; без токена — 401 (для /auth/v2/me)."""
     if creds is None:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            detail={"message": "Требуется авторизация", "code": "unauthorized"},
-        )
+        _unauthorized()
     return decode(creds.credentials, "access")
 
 
-def require_region_admin(
-    repo: StoreDep,
-    creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
-) -> User:
-    """Только администратор района с валидным access JWT (без демо-подстановки)."""
-    if creds is None:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            detail={"message": "Требуется авторизация", "code": "unauthorized"},
-        )
-    uid = decode(creds.credentials, "access")
-    user = repo.find_user_by_id(uid)
-    if user is None:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            detail={"message": "Недействительная сессия", "code": "unauthorized"},
-        )
+def require_region_admin(user: User = Depends(get_current_user)) -> User:
+    """Только администратор района с валидным access JWT."""
     if user.role != Role.region_admin:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
@@ -105,11 +84,6 @@ def require_region_admin(
                 "message": "Действие доступно только администратору района",
                 "code": "forbidden",
             },
-        )
-    if user.status is not None and user.status.value == "blocked":
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            detail={"message": "Аккаунт заблокирован", "code": "account_blocked"},
         )
     return user
 

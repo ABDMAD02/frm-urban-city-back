@@ -23,27 +23,22 @@ schema = c.get("/openapi.json").json()
 paths = schema["paths"]
 print(f"OpenAPI сгенерирован: {len(paths)} путей")
 
-# health
+# health (public)
 health = c.get("/health").json()
 check("GET /health", health.get("status") == "ok")
 
-# чтения
-objs = c.get(f"{B}/objects").json()
-check("GET /objects → 34 active", len(objs) == 34)
-check("GET /inspections", c.get(f"{B}/inspections").status_code == 200)
-check("GET /prescriptions", c.get(f"{B}/prescriptions").status_code == 200)
-check("GET /owners", len(c.get(f"{B}/owners").json()) == 8)
-check("GET /districts", len(c.get(f"{B}/districts").json()) == 3)
-check("GET /object-types", "Билборд" in c.get(f"{B}/object-types").json())
-check("GET /analytics/summary", c.get(f"{B}/analytics/summary").json()["total"] == 36)
-check("GET /analytics/status-distribution", isinstance(c.get(f"{B}/analytics/status-distribution").json(), dict))
+# anonymous must not reach operational routes
+check("GET /objects anon → 401", c.get(f"{B}/objects").status_code == 401)
+check("POST /objects anon → 401", c.post(f"{B}/objects", json={"name": "x", "type": "Магазин", "lat": 1, "lng": 1}).status_code == 401)
+check("GET /analytics/summary anon → 401", c.get(f"{B}/analytics/summary").status_code == 401)
+check("GET /geocode/reverse anon → 401", c.get(f"{B}/geocode/reverse", params={"lat": 51.2, "lng": 51.3}).status_code == 401)
 
 # auth
 login = c.post(f"{B}/auth/v2/login", json={"email": "a.nurlanova@uralsk.kz", "password": "UC-0001-u1"})
 check("POST /auth/v2/login", login.status_code == 200 and "access_token" in login.json())
 tok = login.json()["access_token"]
 urbanist_h = {"Authorization": f"Bearer {tok}"}
-me = c.get(f"{B}/auth/me", headers={"Authorization": f"Bearer {tok}"})
+me = c.get(f"{B}/auth/me", headers=urbanist_h)
 check("GET /auth/me по токену = урбанист", me.json()["role"] == "urbanist")
 bad = c.post(f"{B}/auth/v2/login", json={"email": "a.nurlanova@uralsk.kz", "password": "wrong"})
 check("POST /auth/v2/login bad password → 401", bad.status_code == 401)
@@ -52,21 +47,33 @@ check("POST /auth/v2/login region_admin", admin_login.status_code == 200 and "ac
 admin_tok = admin_login.json()["access_token"]
 admin_h = {"Authorization": f"Bearer {admin_tok}"}
 
+# чтения под admin
+objs = c.get(f"{B}/objects", headers=admin_h).json()
+check("GET /objects → 34 active", len(objs) == 34)
+check("GET /inspections", c.get(f"{B}/inspections", headers=admin_h).status_code == 200)
+check("GET /prescriptions", c.get(f"{B}/prescriptions", headers=admin_h).status_code == 200)
+check("GET /owners", len(c.get(f"{B}/owners", headers=admin_h).json()) == 8)
+check("GET /districts", len(c.get(f"{B}/districts", headers=admin_h).json()) == 3)
+check("GET /object-types", "Билборд" in c.get(f"{B}/object-types", headers=admin_h).json())
+check("GET /analytics/summary", c.get(f"{B}/analytics/summary", headers=admin_h).json()["total"] == 34)
+check("GET /analytics/status-distribution", isinstance(c.get(f"{B}/analytics/status-distribution", headers=admin_h).json(), dict))
+check("GET /geocode/reverse auth", c.get(f"{B}/geocode/reverse", params={"lat": 51.2, "lng": 51.3}, headers=admin_h).status_code == 200)
+
 # создание объекта
-new = c.post(f"{B}/objects", json={"name": "Тест-объект", "type": "Магазин", "lat": 51.2, "lng": 51.3})
+new = c.post(f"{B}/objects", json={"name": "Тест-объект", "type": "Магазин", "lat": 51.2, "lng": 51.3}, headers=admin_h)
 check("POST /objects → new", new.status_code == 201 and new.json()["status"] == "new")
 nid = new.json()["id"]
 
 # FSM: недопустимый переход new → closed = 409
-bad = c.patch(f"{B}/objects/{nid}", json={"patch": {"status": "closed"}})
+bad = c.patch(f"{B}/objects/{nid}", json={"patch": {"status": "closed"}}, headers=admin_h)
 check("PATCH недопустимый переход → 409", bad.status_code == 409)
-check("PATCH недопустимый переход envelope", bad.json()["code"] == "http_409" and "Недопустимый переход" in bad.json()["message"])
+check("PATCH недопустимый переход envelope", bad.json()["code"] == "conflict" and "Недопустимый переход" in bad.json()["message"])
 # допустимый new → not_inspected
-good = c.patch(f"{B}/objects/{nid}", json={"patch": {"status": "not_inspected"}, "note": "ок"})
+good = c.patch(f"{B}/objects/{nid}", json={"patch": {"status": "not_inspected"}, "note": "ок"}, headers=admin_h)
 check("PATCH допустимый переход → 200", good.status_code == 200 and good.json()["status"] == "not_inspected")
 
 # проверка с замечаниями авто-создаёт предписание и меняет статус
-insp = c.post(f"{B}/objects/{nid}/inspections", json={
+insp = c.post(f"{B}/objects/{nid}/inspections", headers=admin_h, json={
     "inspection": {"id": "", "objectId": nid, "inspector": "Тест", "date": "2026-07-02",
                    "result": "has_remarks", "checklist": [], "photoIds": []},
     "status": "prescription_issued", "note": "нарушение",
@@ -77,7 +84,7 @@ check("POST inspection has_remarks → предписание создано", i
 check("  статус объекта → prescription_issued", j["object"]["status"] == "prescription_issued")
 
 # проверка без фото → 400
-nofoto = c.post(f"{B}/objects/{nid}/inspections", json={
+nofoto = c.post(f"{B}/objects/{nid}/inspections", headers=admin_h, json={
     "inspection": {"id": "", "objectId": nid, "inspector": "Т", "date": "2026-07-02",
                    "result": "compliant", "checklist": [], "photoIds": []},
     "status": "compliant", "photos": [],
@@ -85,10 +92,10 @@ nofoto = c.post(f"{B}/objects/{nid}/inspections", json={
 check("POST inspection без фото → 400", nofoto.status_code == 400)
 
 # повторная проверка fixed → violation_fixed
-re = c.post(f"{B}/objects/{nid}/reinspections", json={"result": "fixed"})
+re = c.post(f"{B}/objects/{nid}/reinspections", headers=admin_h, json={"result": "fixed"})
 check("POST reinspection fixed → violation_fixed", re.status_code == 200 and re.json()["status"] == "violation_fixed")
 
-# DELETE object: no token → 401, urbanist → 403, region_admin → 204
+# DELETE object: no token → 401, urbanist → 403, region_admin → 204 (soft-archive)
 del_anon = c.delete(f"{B}/objects/{nid}")
 check("DELETE /objects without token → 401", del_anon.status_code == 401)
 del_forbidden = c.delete(f"{B}/objects/{nid}", headers=urbanist_h)
@@ -97,9 +104,9 @@ del_ok = c.delete(f"{B}/objects/{nid}", headers=admin_h)
 check("DELETE /objects as region_admin → 204", del_ok.status_code == 204)
 gone = c.get(f"{B}/objects/{nid}", headers=admin_h)
 check("GET deleted object → 404", gone.status_code == 404)
-check("GET deleted object envelope", gone.json()["code"] == "http_404")
+check("GET deleted object envelope", gone.json()["code"] == "not_found")
 
-# bulk-delete: create two, delete with missing id mixed in
+# bulk-delete: same soft-archive semantics
 b1 = c.post(f"{B}/objects", json={"name": "Bulk-1", "type": "Магазин", "lat": 51.2, "lng": 51.3}, headers=admin_h)
 b2 = c.post(f"{B}/objects", json={"name": "Bulk-2", "type": "Магазин", "lat": 51.21, "lng": 51.31}, headers=admin_h)
 bulk_ids = [b1.json()["id"], b2.json()["id"], "missing-id", b1.json()["id"]]
@@ -110,6 +117,7 @@ check(
     "POST /objects/bulk-delete → deleted=2",
     bulk_ok.status_code == 200 and bulk_ok.json().get("deleted") == 2,
 )
+check("GET bulk-deleted object → 404", c.get(f"{B}/objects/{b1.json()['id']}", headers=admin_h).status_code == 404)
 bulk_again = c.post(f"{B}/objects/bulk-delete", json={"ids": bulk_ids}, headers=admin_h)
 check(
     "POST /objects/bulk-delete idempotent → deleted=0",
@@ -177,7 +185,7 @@ biz2 = c.post(
     headers=admin_h,
 )
 check("POST second Owner same account → 201", biz2.status_code == 201)
-filt = c.get(f"{B}/owners", params={"ownerUserId": own_uid})
+filt = c.get(f"{B}/owners", params={"ownerUserId": own_uid}, headers=admin_h)
 check("GET /owners?ownerUserId= → 2", filt.status_code == 200 and len(filt.json()) == 2)
 bad_link = c.post(
     f"{B}/owners",
@@ -215,17 +223,29 @@ check("GET /prescriptions?ownerId=foreign → 403", foreign_pr.status_code == 40
 owner_ph = c.get(f"{B}/photos", headers=owner_h)
 check("GET /photos owner-scoped", owner_ph.status_code == 200 and len(owner_ph.json()) >= 1)
 owner_hist = c.get(f"{B}/history", headers=owner_h)
-check("GET /history owner-scoped", owner_hist.status_code == 200 and all(h["objectId"] in {"o5", "o12"} for h in owner_hist.json()))
+own_obj_ids = {o["id"] for o in own_objs.json()}
+check(
+    "GET /history owner-scoped",
+    owner_hist.status_code == 200 and all(h["objectId"] in own_obj_ids for h in owner_hist.json()),
+)
 owner_notifs = c.get(f"{B}/notifications", headers=owner_h)
-check("GET /notifications owner-scoped", owner_notifs.status_code == 200 and all(n["objectId"] in {"o5", "o12"} for n in owner_notifs.json()))
+check(
+    "GET /notifications owner-scoped",
+    owner_notifs.status_code == 200 and all(n["objectId"] in own_obj_ids for n in owner_notifs.json()),
+)
+owner_summary = c.get(f"{B}/analytics/summary", headers=owner_h)
+check(
+    "GET /analytics/summary owner-scoped",
+    owner_summary.status_code == 200 and owner_summary.json()["total"] == len(own_objs.json()),
+)
 audit_forbidden = c.get(f"{B}/audit", headers=urbanist_h)
 check("GET /audit as urbanist → 403", audit_forbidden.status_code == 403)
 audit_admin = c.get(f"{B}/audit", headers=admin_h)
 check("GET /audit as region_admin → 200", audit_admin.status_code == 200)
 
 # отправка предписания по email
-pid = c.get(f"{B}/prescriptions").json()[0]["id"]
-snd = c.post(f"{B}/prescriptions/{pid}/send", json={})
+pid = c.get(f"{B}/prescriptions", headers=admin_h).json()[0]["id"]
+snd = c.post(f"{B}/prescriptions/{pid}/send", json={}, headers=admin_h)
 check("POST /prescriptions/{id}/send", snd.status_code == 200 and snd.json()["sent"] is True)
 
 print(f"\nИТОГ: {ok} успешно, {len(fail)} провалено")
