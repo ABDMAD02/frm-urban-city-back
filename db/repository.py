@@ -971,6 +971,40 @@ class DbStore:
         mappers.set_street_code_map(self._street_code_map())
         return mappers.street(row)
 
+    def _street_row(self, sid: str) -> m.Street | None:
+        uid = self._resolve_uuid(m.Street, sid)
+        if uid is None:
+            return None
+        row = self._session.get(m.Street, uid)
+        if row is None:
+            return None
+        self._ensure_same_region(row.region_id)
+        return row
+
+    def update_street(self, sid: str, body: dto.StreetPatch) -> dto.Street | None:
+        row = self._street_row(sid)
+        if row is None:
+            return None
+        data = body.model_dump(exclude_unset=True)
+        if "name" in data and data["name"] is not None:
+            row.name = data["name"].strip()
+        if "districtId" in data:
+            row.district_id = data["districtId"]
+        if "microdistrictId" in data:
+            row.microdistrict_id = data["microdistrictId"]
+        self._session.flush()
+        mappers.set_street_code_map(self._street_code_map())
+        return mappers.street(row)
+
+    def delete_street(self, sid: str) -> bool:
+        row = self._street_row(sid)
+        if row is None:
+            return False
+        self._session.delete(row)
+        self._session.flush()
+        mappers.set_street_code_map(self._street_code_map())
+        return True
+
     def get_geo_config(self, city_id: str) -> dto.GeoConfig:
         from fastapi import HTTPException
 
@@ -986,6 +1020,65 @@ class DbStore:
                 detail={"message": "Город не найден", "code": "not_found"},
             )
         return dto.GeoConfig(
+            hasDistricts=row.has_districts,
+            hasMicrodistricts=row.has_microdistricts,
+            hasStreets=row.has_streets,
+            addressSchema=row.address_schema or "microdistrict,street,house",
+            cityType=row.city_type,
+            oblast=row.oblast,
+        )
+
+    def update_geo_config(self, city_id: str, body: dto.GeoConfigPatch) -> dto.GeoConfig:
+        from fastapi import HTTPException
+
+        if self._region_id and city_id != self._region_id:
+            raise HTTPException(
+                status_code=403,
+                detail={"message": "Нет доступа к данным другого города", "code": "forbidden"},
+            )
+        row = self._session.get(m.Region, city_id)
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": "Город не найден", "code": "not_found"},
+            )
+        data = body.model_dump(exclude_unset=True)
+        mapping = {
+            "hasDistricts": "has_districts",
+            "hasMicrodistricts": "has_microdistricts",
+            "hasStreets": "has_streets",
+            "addressSchema": "address_schema",
+            "cityType": "city_type",
+            "oblast": "oblast",
+        }
+        for key, attr in mapping.items():
+            if key in data:
+                setattr(row, attr, data[key])
+        self._session.flush()
+        return self.get_geo_config(city_id)
+
+    def get_current_city(self) -> dto.CurrentCity:
+        from fastapi import HTTPException
+
+        city_id = self._region_id
+        if not city_id:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "У пользователя нет привязанного города",
+                    "code": "no_region",
+                },
+            )
+        row = self._session.get(m.Region, city_id)
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": "Город не найден", "code": "not_found"},
+            )
+        return dto.CurrentCity(
+            id=row.id,
+            name=row.name,
+            code=row.code,
             hasDistricts=row.has_districts,
             hasMicrodistricts=row.has_microdistricts,
             hasStreets=row.has_streets,

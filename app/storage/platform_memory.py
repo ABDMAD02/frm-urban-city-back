@@ -228,6 +228,7 @@ class MemoryPlatformStore:
                 cityType=body.cityType,
                 oblast=body.oblast,
             ),
+            name=body.name.strip(),
         )
         if body.hasDistricts or body.hasMicrodistricts:
             _ = (DISTRICTS, MICRODISTRICTS, TYPES)

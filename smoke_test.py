@@ -39,7 +39,10 @@ check("POST /auth/v2/login", login.status_code == 200 and "access_token" in logi
 tok = login.json()["access_token"]
 urbanist_h = {"Authorization": f"Bearer {tok}"}
 me = c.get(f"{B}/auth/me", headers=urbanist_h)
-check("GET /auth/me по токену = урбанист", me.json()["role"] == "urbanist")
+check(
+    "GET /auth/me по токену = урбанист",
+    me.status_code == 200 and me.json()["role"] == "urbanist" and me.json().get("regionId") == "uralsk",
+)
 bad = c.post(f"{B}/auth/v2/login", json={"email": "a.nurlanova@uralsk.kz", "password": "wrong"})
 check("POST /auth/v2/login bad password → 401", bad.status_code == 401)
 admin_login = c.post(f"{B}/auth/v2/login", json={"email": "a.kenzhebekov@uralsk.kz", "password": "UC-0003-u3"})
@@ -317,6 +320,27 @@ check(
 geo_forbidden = c.get(f"{B}/cities/othercity/geo-config", headers=admin_h)
 check("GET geo-config other city → 403", geo_forbidden.status_code == 403)
 
+cur = c.get(f"{B}/cities/current", headers=admin_h)
+check(
+    "GET /cities/current → uralsk",
+    cur.status_code == 200
+    and cur.json().get("id") == "uralsk"
+    and cur.json().get("name") == "Уральск"
+    and cur.json().get("addressSchema") == "microdistrict,street,house",
+)
+geo_patch = c.patch(
+    f"{B}/cities/uralsk/geo-config",
+    headers=admin_h,
+    json={"hasStreets": True, "addressSchema": "microdistrict,street,house", "oblast": "ЗКО"},
+)
+check("PATCH /cities/uralsk/geo-config → 200", geo_patch.status_code == 200 and geo_patch.json().get("oblast") == "ЗКО")
+geo_patch_forbidden = c.patch(
+    f"{B}/cities/uralsk/geo-config",
+    headers=urbanist_h,
+    json={"hasStreets": False},
+)
+check("PATCH geo-config as urbanist → 403", geo_patch_forbidden.status_code == 403)
+
 st = c.post(
     f"{B}/streets",
     headers=admin_h,
@@ -325,6 +349,12 @@ st = c.post(
 check("POST /streets → 201", st.status_code == 201 and st.json()["name"] == "Кунаева")
 sts = c.get(f"{B}/streets", headers=admin_h)
 check("GET /streets → >=1", sts.status_code == 200 and len(sts.json()) >= 1)
+st_patch = c.patch(f"{B}/streets/{st.json()['id']}", headers=admin_h, json={"name": "Кунаева пр."})
+check("PATCH /streets → 200", st_patch.status_code == 200 and st_patch.json()["name"] == "Кунаева пр.")
+# restore name for address test
+c.patch(f"{B}/streets/{st.json()['id']}", headers=admin_h, json={"name": "Кунаева"})
+st_del_forbidden = c.delete(f"{B}/streets/{st.json()['id']}", headers=urbanist_h)
+check("DELETE /streets as urbanist → 403", st_del_forbidden.status_code == 403)
 
 md_free = c.post(
     f"{B}/microdistricts/manage",
@@ -353,6 +383,9 @@ check(
     and "12" in addr_obj.json().get("address", ""),
 )
 c.delete(f"{B}/objects/{addr_obj.json()['id']}", headers=admin_h)
+st_del = c.delete(f"{B}/streets/{st.json()['id']}", headers=admin_h)
+check("DELETE /streets → 204", st_del.status_code == 204)
+check("GET /streets after delete excludes removed", all(s["id"] != st.json()["id"] for s in c.get(f"{B}/streets", headers=admin_h).json()))
 
 # platform provision creates city + 6 checklist items
 from app.user_helpers import PLATFORM_SUPERADMIN_EMAIL, PLATFORM_SUPERADMIN_PASSWORD
