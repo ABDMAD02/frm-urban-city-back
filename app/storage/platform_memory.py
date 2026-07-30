@@ -31,7 +31,6 @@ from app.user_helpers import (
     temp_password,
 )
 from app.passwords import hash_password
-from app.store import DISTRICTS, MICRODISTRICTS, TYPES
 
 _PLANS = [
     Plan(id=SubscriptionPlan.trial, label="Trial", maxUsers=10, maxObjects=50, priceHint="Бесплатно"),
@@ -213,9 +212,11 @@ class MemoryPlatformStore:
         self._ref_seeded.add(code)
         self._audit(code, actor, PlatformAuditAction.region_provisioned, f"plan={body.plan.value}")
         self._audit(code, actor, PlatformAuditAction.region_admin_issued, login)
-        # Mirror checklist + geo into operational memory store
+        # Mirror checklist + empty geo into operational memory store (no Uralsk copy)
+        from app import store as seed_store
         from app.deps import _memory
-        from app.models import GeoConfig
+        from app.enums import AccountStatus as AccStatus, Role
+        from app.models import GeoConfig, User
 
         _memory.seed_checklist_for_region(code)
         _memory.set_geo_config(
@@ -230,10 +231,19 @@ class MemoryPlatformStore:
             ),
             name=body.name.strip(),
         )
-        if body.hasDistricts or body.hasMicrodistricts:
-            _ = (DISTRICTS, MICRODISTRICTS, TYPES)
-        else:
-            _ = TYPES
+        admin_user = User(
+            id=code_u,
+            name=body.adminName.strip(),
+            role=Role.region_admin,
+            position="Администратор региона",
+            login=login,
+            email=f"{login}@{code}.local",
+            status=AccStatus.active,
+            createdAt=today.isoformat(),
+            regionId=code,
+        )
+        seed_store.USERS.append(admin_user)
+        _memory._password_hashes[code_u] = hash_password(creds.tempPassword)
         return region, sub, account, creds
 
     def patch_region_status(self, region_id: str, status: RegionStatus, *, actor: str) -> Region:

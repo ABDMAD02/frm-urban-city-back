@@ -28,6 +28,27 @@ def get_store(
     creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ) -> Generator[Store, None, None]:
     if not use_database():
+        # Tenant scope from JWT (same as DB path) so new cities see empty geo.
+        if creds is not None:
+            try:
+                from app import security
+
+                uid = security.decode(creds.credentials, "access")
+                _memory.set_region(None)
+                user = _memory.find_user_by_id(uid)
+                if user is not None:
+                    if user.role == Role.platform_superadmin:
+                        _memory.set_region(None)
+                    elif user.regionId:
+                        _memory.set_region(user.regionId)
+                    else:
+                        _memory.set_region("uralsk")
+                else:
+                    _memory.set_region("uralsk")
+            except Exception:
+                _memory.set_region("uralsk")
+        else:
+            _memory.set_region("uralsk")
         yield _memory
         return
 
