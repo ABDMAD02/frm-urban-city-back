@@ -403,8 +403,9 @@ prov = c.post(
         "code": "smoke-city",
         "name": "Smoke City",
         "adminName": "Smoke Admin",
-        "hasDistricts": False,
-        "hasMicrodistricts": False,
+        # hasDistricts=True by default (как Актау) — география всё равно пустая
+        "hasDistricts": True,
+        "hasMicrodistricts": True,
         "hasStreets": True,
         "addressSchema": "street,house",
         "cityType": "city",
@@ -415,7 +416,7 @@ check(
     "POST /platform/regions → 201 + geo",
     prov.status_code == 201
     and prov.json()["region"]["id"] == "smoke-city"
-    and prov.json()["region"].get("hasDistricts") is False
+    and prov.json()["region"].get("hasDistricts") is True
     and len(prov.json()["region"].get("addressSchema", "")) > 0,
 )
 # operational store checklist seeded for new city (memory parity)
@@ -424,6 +425,42 @@ from app.deps import _memory
 check(
     "provision seeds 6 checklist items",
     len(_memory._checklist.get("smoke-city", [])) == 6,
+)
+check(
+    "provision does not copy Uralsk districts",
+    _memory._districts.get("smoke-city") == [],
+)
+check(
+    "provision does not copy Uralsk microdistricts",
+    _memory._microdistricts.get("smoke-city") == [],
+)
+check(
+    "provision streets empty",
+    _memory._streets.get("smoke-city") == [],
+)
+# login as new city admin → geography lists empty
+new_admin = prov.json()["credentials"]
+city_login = c.post(
+    f"{B}/auth/v2/login",
+    json={"email": new_admin["login"], "password": new_admin["tempPassword"]},
+)
+check("POST /auth/v2/login new city admin", city_login.status_code == 200)
+city_h = {"Authorization": f"Bearer {city_login.json()['access_token']}"}
+check(
+    "GET /districts new city → []",
+    c.get(f"{B}/districts", headers=city_h).json() == [],
+)
+check(
+    "GET /microdistricts new city → []",
+    c.get(f"{B}/microdistricts", headers=city_h).json() == [],
+)
+check(
+    "GET /streets new city → []",
+    c.get(f"{B}/streets", headers=city_h).json() == [],
+)
+check(
+    "GET /checklist-template new city → 6",
+    len(c.get(f"{B}/checklist-template", headers=city_h).json()) == 6,
 )
 
 # отправка предписания по email

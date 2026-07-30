@@ -30,7 +30,7 @@ from app.platform_models import (
     Subscription,
     SubscriptionPatch,
 )
-from app.store import DISTRICTS, MICRODISTRICTS, TYPES
+from app.store import TYPES
 from app.user_helpers import login_for, temp_password
 from app.passwords import hash_password
 from db.codes import uuid_for_code
@@ -183,34 +183,8 @@ class PlatformStore:
             )
         )
 
-    def _seed_region_refs(
-        self,
-        region_id: str,
-        *,
-        has_districts: bool = True,
-        has_microdistricts: bool = True,
-    ) -> None:
-        """Справочники региона: районы / микрорайоны / типы (без объектов)."""
-        prefix = "" if region_id == DEFAULT_REGION else f"{region_id}-"
-        id_map: dict[str, str] = {}
-        if has_districts:
-            for d in DISTRICTS:
-                did = f"{prefix}{d.id}"
-                id_map[d.id] = did
-                self._session.add(m.District(id=did, region_id=region_id, name=d.name))
-            self._session.flush()
-        if has_microdistricts:
-            for md in MICRODISTRICTS:
-                mid = f"{prefix}{md.id}"
-                district_id = id_map.get(md.districtId) if has_districts else None
-                self._session.add(
-                    m.Microdistrict(
-                        id=mid,
-                        region_id=region_id,
-                        district_id=district_id,
-                        name=md.name,
-                    )
-                )
+    def _seed_region_refs(self, region_id: str) -> None:
+        """Типы объектов для нового региона. Географию (районы/МД/улицы) не копируем — пустая."""
         for t_name, t_cat in TYPES:
             self._session.add(
                 m.ObjectType(
@@ -409,11 +383,7 @@ class PlatformStore:
         self._session.add(sub)
         self._session.flush()
 
-        self._seed_region_refs(
-            region_id,
-            has_districts=body.hasDistricts,
-            has_microdistricts=body.hasMicrodistricts,
-        )
+        self._seed_region_refs(region_id)
         self._seed_checklist_template(region_id)
         account, creds = self._issue_region_admin(region_id=region_id, name=body.adminName)
         self._write_audit(

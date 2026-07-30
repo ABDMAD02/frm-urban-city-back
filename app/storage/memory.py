@@ -83,6 +83,13 @@ class MemoryStore:
         self._city_meta: dict[str, dict[str, str]] = {
             "uralsk": {"name": "Уральск", "code": "uralsk"},
         }
+        # Geography is per-region; new cities start empty (no Uralsk copy).
+        self._districts: dict[str, list[District]] = {
+            "uralsk": list(store.DISTRICTS),
+        }
+        self._microdistricts: dict[str, list[Microdistrict]] = {
+            "uralsk": list(store.MICRODISTRICTS),
+        }
 
     def set_region(self, region_id: str | None) -> None:
         self._region_id = region_id
@@ -100,6 +107,8 @@ class MemoryStore:
     def seed_checklist_for_region(self, region_id: str) -> None:
         self._checklist[region_id] = _default_checklist(region_id)
         self._streets.setdefault(region_id, [])
+        self._districts.setdefault(region_id, [])
+        self._microdistricts.setdefault(region_id, [])
 
     def set_geo_config(self, region_id: str, geo: GeoConfig, *, name: str | None = None) -> None:
         self._geo[region_id] = geo
@@ -136,10 +145,16 @@ class MemoryStore:
         md_name = None
         d_name = None
         if body.microdistrictId:
-            md = next((m for m in store.MICRODISTRICTS if m.id == body.microdistrictId), None)
+            md = next(
+                (m for m in self._microdistricts.get(self._region_id or "uralsk", []) if m.id == body.microdistrictId),
+                None,
+            )
             md_name = md.name if md else None
         if body.districtId:
-            d = next((d for d in store.DISTRICTS if d.id == body.districtId), None)
+            d = next(
+                (d for d in self._districts.get(self._region_id or "uralsk", []) if d.id == body.districtId),
+                None,
+            )
             d_name = d.name if d else None
         geo = self._geo.get(self._region_id or "uralsk")
         schema = geo.addressSchema if geo else DEFAULT_ADDRESS_SCHEMA
@@ -418,22 +433,29 @@ class MemoryStore:
         return owner
 
     def list_districts(self) -> list[District]:
-        return store.DISTRICTS
+        region_id = self._region_id or "uralsk"
+        return list(self._districts.get(region_id, []))
 
     def create_district(self, body: DistrictCreate) -> District:
+        region_id = self._region_id or "uralsk"
         d = District(id=store.next_id("d"), name=body.name)
-        store.DISTRICTS.append(d)
+        self._districts.setdefault(region_id, []).append(d)
         return d
 
     def list_microdistricts(self) -> list[Microdistrict]:
-        return store.MICRODISTRICTS
+        region_id = self._region_id or "uralsk"
+        return list(self._microdistricts.get(region_id, []))
 
     def first_microdistrict(self) -> Microdistrict:
-        return store.MICRODISTRICTS[0]
+        items = self.list_microdistricts()
+        if not items:
+            raise LookupError("Нет микрорайонов")
+        return items[0]
 
     def create_microdistrict(self, body: MicrodistrictCreate) -> Microdistrict:
+        region_id = self._region_id or "uralsk"
         m = Microdistrict(id=store.next_id("m"), districtId=body.districtId, name=body.name)
-        store.MICRODISTRICTS.append(m)
+        self._microdistricts.setdefault(region_id, []).append(m)
         return m
 
     def list_object_types(self) -> list[str]:
