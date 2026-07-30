@@ -16,9 +16,11 @@ from app.models import (
     CreateOwnerRequest,
     CreateUserRequest,
     Credentials,
+    CurrentCity,
     District,
     DistrictCreate,
     GeoConfig,
+    GeoConfigPatch,
     HistoryEvent,
     Inspection,
     Microdistrict,
@@ -29,6 +31,7 @@ from app.models import (
     Prescription,
     Street,
     StreetCreate,
+    StreetPatch,
     TrendPoint,
     UpdateUserRequest,
     User,
@@ -77,6 +80,9 @@ class MemoryStore:
                 oblast="ЗКО",
             )
         }
+        self._city_meta: dict[str, dict[str, str]] = {
+            "uralsk": {"name": "Уральск", "code": "uralsk"},
+        }
 
     def set_region(self, region_id: str | None) -> None:
         self._region_id = region_id
@@ -95,8 +101,12 @@ class MemoryStore:
         self._checklist[region_id] = _default_checklist(region_id)
         self._streets.setdefault(region_id, [])
 
-    def set_geo_config(self, region_id: str, geo: GeoConfig) -> None:
+    def set_geo_config(self, region_id: str, geo: GeoConfig, *, name: str | None = None) -> None:
         self._geo[region_id] = geo
+        if name:
+            self._city_meta[region_id] = {"name": name, "code": region_id}
+        else:
+            self._city_meta.setdefault(region_id, {"name": region_id, "code": region_id})
 
     def commit(self) -> None:
         pass
@@ -498,6 +508,28 @@ class MemoryStore:
         self._streets.setdefault(region_id, []).append(street)
         return street
 
+    def update_street(self, sid: str, body: StreetPatch) -> Street | None:
+        region_id = self._region_id or "uralsk"
+        streets = self._streets.get(region_id, [])
+        street = next((s for s in streets if s.id == sid), None)
+        if street is None:
+            return None
+        data = body.model_dump(exclude_unset=True)
+        if "name" in data and data["name"] is not None:
+            street.name = data["name"].strip()
+        if "districtId" in data:
+            street.districtId = data["districtId"]
+        if "microdistrictId" in data:
+            street.microdistrictId = data["microdistrictId"]
+        return street
+
+    def delete_street(self, sid: str) -> bool:
+        region_id = self._region_id or "uralsk"
+        streets = self._streets.get(region_id, [])
+        before = len(streets)
+        self._streets[region_id] = [s for s in streets if s.id != sid]
+        return len(self._streets[region_id]) < before
+
     def get_geo_config(self, city_id: str) -> GeoConfig:
         if self._region_id and city_id != self._region_id:
             raise HTTPException(
@@ -511,3 +543,48 @@ class MemoryStore:
                 detail={"message": "Город не найден", "code": "not_found"},
             )
         return geo
+
+    def update_geo_config(self, city_id: str, body: GeoConfigPatch) -> GeoConfig:
+        if self._region_id and city_id != self._region_id:
+            raise HTTPException(
+                status_code=403,
+                detail={"message": "Нет доступа к данным другого города", "code": "forbidden"},
+            )
+        geo = self._geo.get(city_id)
+        if geo is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": "Город не найден", "code": "not_found"},
+            )
+        updated = geo.model_copy(update=body.model_dump(exclude_unset=True))
+        self._geo[city_id] = updated
+        return updated
+
+    def get_current_city(self) -> CurrentCity:
+        city_id = self._region_id
+        if not city_id:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "У пользователя нет привязанного города",
+                    "code": "no_region",
+                },
+            )
+        geo = self._geo.get(city_id)
+        meta = self._city_meta.get(city_id)
+        if geo is None or meta is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": "Город не найден", "code": "not_found"},
+            )
+        return CurrentCity(
+            id=city_id,
+            name=meta["name"],
+            code=meta.get("code", city_id),
+            hasDistricts=geo.hasDistricts,
+            hasMicrodistricts=geo.hasMicrodistricts,
+            hasStreets=geo.hasStreets,
+            addressSchema=geo.addressSchema,
+            cityType=geo.cityType,
+            oblast=geo.oblast,
+        )

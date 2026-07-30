@@ -15,7 +15,8 @@ from ..security import (
 from ..models import (
     Owner, CreateOwnerRequest, District, DistrictCreate, Microdistrict,
     MicrodistrictCreate, ObjectTypeCreate, Photo, HistoryEvent, ObjectVersion, User,
-    ChecklistTemplateItem, ChecklistTemplateManageRequest, Street, StreetCreate, GeoConfig,
+    ChecklistTemplateItem, ChecklistTemplateManageRequest, Street, StreetCreate, StreetPatch,
+    GeoConfig, GeoConfigPatch, CurrentCity,
 )
 from ..enums import PhotoKind
 
@@ -197,6 +198,36 @@ def create_street(
     return repo.create_street(body)
 
 
+@router.patch("/streets/{sid}", response_model=Street, summary="Изменить улицу")
+def update_street(
+    sid: str, body: StreetPatch, repo: StoreDep, user: User = Depends(require_region_admin)
+):
+    street = repo.update_street(sid, body)
+    if street is None:
+        raise HTTPException(404, detail={"message": "Улица не найдена", "code": "not_found"})
+    return street
+
+
+@router.delete(
+    "/streets/{sid}",
+    status_code=204,
+    summary="Удалить улицу",
+)
+def delete_street(sid: str, repo: StoreDep, user: User = Depends(require_region_admin)):
+    if not repo.delete_street(sid):
+        raise HTTPException(404, detail={"message": "Улица не найдена", "code": "not_found"})
+    return None
+
+
+@router.get(
+    "/cities/current",
+    response_model=CurrentCity,
+    summary="Текущий город пользователя (из JWT regionId)",
+)
+def get_current_city(repo: StoreDep, user: User = Depends(get_current_user)):
+    return repo.get_current_city()
+
+
 @router.get(
     "/cities/{city_id}/geo-config",
     response_model=GeoConfig,
@@ -204,3 +235,17 @@ def create_street(
 )
 def get_geo_config(city_id: str, repo: StoreDep, user: User = Depends(get_current_user)):
     return repo.get_geo_config(city_id)
+
+
+@router.patch(
+    "/cities/{city_id}/geo-config",
+    response_model=GeoConfig,
+    summary="Обновить гео-конфиг города",
+)
+def patch_geo_config(
+    city_id: str,
+    body: GeoConfigPatch,
+    repo: StoreDep,
+    user: User = Depends(require_region_admin),
+):
+    return repo.update_geo_config(city_id, body)

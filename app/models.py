@@ -394,7 +394,36 @@ class StreetCreate(BaseModel):
     microdistrictId: str | None = None
 
 
+class StreetPatch(BaseModel):
+    name: str | None = None
+    districtId: str | None = None
+    microdistrictId: str | None = None
+
+
 class GeoConfig(BaseModel):
+    hasDistricts: bool
+    hasMicrodistricts: bool
+    hasStreets: bool
+    addressSchema: str
+    cityType: str | None = None
+    oblast: str | None = None
+
+
+class GeoConfigPatch(BaseModel):
+    hasDistricts: bool | None = None
+    hasMicrodistricts: bool | None = None
+    hasStreets: bool | None = None
+    addressSchema: str | None = None
+    cityType: str | None = None
+    oblast: str | None = None
+
+
+class CurrentCity(BaseModel):
+    """Город текущего пользователя (из JWT regionId) + geo-конфиг."""
+
+    id: str
+    name: str
+    code: str
     hasDistricts: bool
     hasMicrodistricts: bool
     hasStreets: bool
