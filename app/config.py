@@ -47,6 +47,8 @@ R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL", "").strip()
 R2_API_TOKEN = os.getenv("R2_API_TOKEN", "").strip()
 R2_MAX_UPLOAD_BYTES = int(os.getenv("R2_MAX_UPLOAD_BYTES", str(15 * 1024 * 1024)))
 R2_CACHE_CONTROL = os.getenv("R2_CACHE_CONTROL", "public, max-age=31536000, immutable").strip()
+# TTL for SigV4 GET URLs issued by GET /photos (not stored in DB).
+R2_PRESIGN_TTL_SECONDS = int(os.getenv("R2_PRESIGN_TTL_SECONDS", "3600"))
 _R2_ALLOWED = os.getenv(
     "R2_ALLOWED_CONTENT_TYPES",
     "image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif",
