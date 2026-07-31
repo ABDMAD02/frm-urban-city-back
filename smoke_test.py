@@ -79,6 +79,31 @@ check(
     "GET /photos includes uploaded",
     any(p["id"] == upload.json()["id"] and p.get("objectId") == "o1" for p in photos_after),
 )
+# HEIC → JPEG on upload (browser-visible)
+try:
+    from io import BytesIO
+    from PIL import Image
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+    _heic_buf = BytesIO()
+    Image.new("RGB", (32, 32), (30, 120, 200)).save(_heic_buf, format="HEIF")
+    heic_bytes = _heic_buf.getvalue()
+    heic_up = c.post(
+        f"{B}/photos",
+        headers=admin_h,
+        files={"file": ("iphone.HEIC", heic_bytes, "image/heic")},
+        data={"kind": "general", "caption": "heic", "objectId": "o1", "id": "ph-heic-smoke"},
+    )
+    heic_url = (heic_up.json().get("url") or "").lower()
+    check(
+        "POST /photos HEIC → JPEG stored",
+        heic_up.status_code == 201
+        and heic_up.json().get("id") == "ph-heic-smoke"
+        and ("iphone.jpg" in heic_url or heic_url.endswith(".jpg")),
+    )
+except Exception as exc:  # pragma: no cover
+    check(f"POST /photos HEIC skipped ({exc.__class__.__name__})", False)
 # Client id on upload → same id in inspection.photoIds → GET /photos resolves it
 client_ph = "ph-smoke-client-1"
 up_client = c.post(
