@@ -403,15 +403,54 @@ class DbStore:
                 inspection_id=row.id, key=item.key, label=item.label,
                 value=item.value, comment=item.comment,
             ))
+        # Link any pre-uploaded photos referenced by photoIds
+        for pid in insp.photoIds or []:
+            prow = self._session.scalar(select(m.Photo).where(m.Photo.code == pid))
+            if prow is not None:
+                prow.inspection_id = row.id
+                if obj_uid and prow.object_id != obj_uid:
+                    prow.object_id = obj_uid
+        self._session.flush()
         insp.id = code
         return insp
 
     def add_photo_if_missing(self, photo: Photo, object_id: str | None = None, inspection_id: str | None = None) -> Photo:
-        existing = self._session.scalar(select(m.Photo).where(m.Photo.code == photo.id)) if photo.id else None
+        from fastapi import HTTPException
+
+        object_id = object_id or photo.objectId
+        if not object_id:
+            raise HTTPException(
+                status_code=400,
+                detail={"message": "objectId обязателен для фото", "code": "bad_request"},
+            )
+        existing = (
+            self._session.scalar(select(m.Photo).where(m.Photo.code == photo.id)) if photo.id else None
+        )
         if existing:
-            return mappers.photo(existing)
+            obj = self._session.get(m.CityObject, existing.object_id) if existing.object_id else None
+            if obj is not None:
+                self._ensure_same_region(obj.region_id)
+            if inspection_id:
+                insp_uid = self._resolve_uuid(m.Inspection, inspection_id)
+                if insp_uid and existing.inspection_id != insp_uid:
+                    existing.inspection_id = insp_uid
+            if photo.url and not existing.url:
+                existing.url = photo.url
+            if photo.caption and not existing.caption:
+                existing.caption = photo.caption
+            self._session.flush()
+            return mappers.photo(existing, object_code=self._object_code(existing.object_id))
+
         code = photo.id or self.next_id("p")
-        obj_uid = self._object_uuid(object_id or "o1")
+        obj_uid = self._object_uuid(object_id)
+        if obj_uid is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": "Объект не найден", "code": "not_found"},
+            )
+        obj = self._session.get(m.CityObject, obj_uid)
+        if obj is not None:
+            self._ensure_same_region(obj.region_id)
         insp_uid = self._resolve_uuid(m.Inspection, inspection_id) if inspection_id else None
         row = m.Photo(
             id=uuid_for_code(code),
@@ -422,14 +461,12 @@ class DbStore:
             caption=photo.caption,
             color=photo.color or None,
             url=photo.url,
-            date=_parse_date(photo.date),
+            date=_parse_date(photo.date) if photo.date else _parse_date(config.today_str()),
             author=photo.author,
         )
         self._session.add(row)
         self._session.flush()
-        photo.id = code
-        photo.objectId = object_id
-        return photo
+        return mappers.photo(row, object_code=object_id)
 
     def add_prescription(self, pr: Prescription) -> Prescription:
         code = pr.id or self.next_id("pr")
@@ -859,7 +896,13 @@ class DbStore:
         return self.list_object_types()
 
     def list_photos(self) -> list[Photo]:
-        return [mappers.photo(r) for r in self._session.scalars(select(m.Photo)).all()]
+        q = select(m.Photo)
+        if self._region_id:
+            q = q.join(m.CityObject, m.Photo.object_id == m.CityObject.id).where(
+                m.CityObject.region_id == self._region_id
+            )
+        rows = self._session.scalars(q).all()
+        return [mappers.photo(r, object_code=self._object_code(r.object_id)) for r in rows]
 
     def list_history(self) -> list[HistoryEvent]:
         rows = self._session.scalars(select(m.HistoryEvent)).all()

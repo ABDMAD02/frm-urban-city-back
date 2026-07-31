@@ -53,6 +53,32 @@ admin_h = {"Authorization": f"Bearer {admin_tok}"}
 # чтения под admin
 objs = c.get(f"{B}/objects", headers=admin_h).json()
 check("GET /objects → 34 active", len(objs) == 34)
+photos_admin = c.get(f"{B}/photos", headers=admin_h)
+check(
+    "GET /photos admin → seeded with objectId",
+    photos_admin.status_code == 200
+    and len(photos_admin.json()) >= 1
+    and all(p.get("objectId") for p in photos_admin.json()),
+)
+# upload photo then list includes it
+upload = c.post(
+    f"{B}/photos",
+    headers=admin_h,
+    files={"file": ("facade.jpg", b"\xff\xd8\xff\xe0fakejpeg", "image/jpeg")},
+    data={"kind": "before", "caption": "smoke facade", "objectId": "o1"},
+)
+check(
+    "POST /photos → 201 with url+objectId",
+    upload.status_code == 201
+    and upload.json().get("objectId") == "o1"
+    and bool(upload.json().get("url"))
+    and bool(upload.json().get("id")),
+)
+photos_after = c.get(f"{B}/photos", headers=admin_h).json()
+check(
+    "GET /photos includes uploaded",
+    any(p["id"] == upload.json()["id"] and p.get("objectId") == "o1" for p in photos_after),
+)
 check("GET /inspections", c.get(f"{B}/inspections", headers=admin_h).status_code == 200)
 check("GET /prescriptions", c.get(f"{B}/prescriptions", headers=admin_h).status_code == 200)
 check("GET /owners", len(c.get(f"{B}/owners", headers=admin_h).json()) == 8)

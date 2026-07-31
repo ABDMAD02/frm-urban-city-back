@@ -245,11 +245,26 @@ class MemoryStore:
         return insp
 
     def add_photo_if_missing(self, photo: Photo, object_id: str | None = None, inspection_id: str | None = None) -> Photo:
-        if photo not in store.PHOTOS:
-            if not photo.id:
-                photo.id = store.next_id("p")
-            photo.objectId = object_id
-            store.PHOTOS.append(photo)
+        object_id = object_id or photo.objectId
+        if not object_id:
+            raise HTTPException(
+                status_code=400,
+                detail={"message": "objectId обязателен для фото", "code": "bad_request"},
+            )
+        if photo.id:
+            existing = next((p for p in store.PHOTOS if p.id == photo.id), None)
+            if existing is not None:
+                if not existing.objectId:
+                    existing.objectId = object_id
+                if photo.url and not existing.url:
+                    existing.url = photo.url
+                if photo.caption and not existing.caption:
+                    existing.caption = photo.caption
+                return existing
+        if not photo.id:
+            photo.id = store.next_id("p")
+        photo.objectId = object_id
+        store.PHOTOS.append(photo)
         return photo
 
     def add_prescription(self, pr: Prescription) -> Prescription:

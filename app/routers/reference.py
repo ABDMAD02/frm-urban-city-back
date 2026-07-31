@@ -101,13 +101,16 @@ async def upload_photo(
     file: UploadFile = File(...),
     kind: PhotoKind = Form(PhotoKind.general),
     caption: str = Form(""),
-    objectId: Optional[str] = Form(None),
+    objectId: str = Form(..., description="Код объекта (o1, …)"),
     user: User = Depends(get_current_user),
 ):
     from app.storage.object_store import R2NotConfiguredError, r2_configured, upload_bytes
 
-    if objectId:
-        ensure_object_access(repo, user, objectId)
+    if not objectId:
+        raise HTTPException(400, detail={"message": "objectId обязателен", "code": "bad_request"})
+    ensure_object_access(repo, user, objectId)
+    if repo.find_object(objectId) is None:
+        raise HTTPException(404, detail={"message": "Объект не найден", "code": "not_found"})
 
     data = await file.read()
     if not data:
