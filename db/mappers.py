@@ -176,10 +176,10 @@ def prescription(row: orm.Prescription, *, object_code: str, inspection_code: st
     )
 
 
-def photo(row: orm.Photo) -> dto.Photo:
+def photo(row: orm.Photo, *, object_code: str | None = None) -> dto.Photo:
     return dto.Photo(
         id=_code(row),
-        objectId=_code(row.object) if getattr(row, "object", None) is not None else None,
+        objectId=object_code,
         kind=PhotoKind(row.kind.value),
         caption=row.caption or "",
         color=row.color or "",
