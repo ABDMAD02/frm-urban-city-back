@@ -17,6 +17,52 @@ from ..enums import (
 router = APIRouter(tags=["Проверки"])
 
 
+def _persist_inspection_photos(
+    repo: StoreDep,
+    *,
+    oid: str,
+    insp_id: str,
+    body: CreateInspectionRequest,
+) -> list[str]:
+    """Гарантирует строки Photo в сторе и возвращает итоговые photoIds."""
+    saved_ids: list[str] = []
+    seen: set[str] = set()
+
+    for ph in body.photos:
+        if not ph.objectId:
+            ph.objectId = oid
+        saved = repo.add_photo_if_missing(ph, object_id=oid, inspection_id=insp_id)
+        if saved.id not in seen:
+            saved_ids.append(saved.id)
+            seen.add(saved.id)
+
+    for pid in body.inspection.photoIds or []:
+        if not pid or pid in seen:
+            continue
+        existing = repo.find_photo(pid)
+        if existing is None:
+            raise HTTPException(
+                400,
+                detail={
+                    "message": f"Фото {pid} не найдено: сначала POST /photos или передайте объект в photos[]",
+                    "code": "photo_not_found",
+                },
+            )
+        linked = repo.add_photo_if_missing(existing, object_id=oid, inspection_id=insp_id)
+        saved_ids.append(linked.id)
+        seen.add(linked.id)
+
+    if not saved_ids:
+        raise HTTPException(
+            400,
+            detail={
+                "message": "Фотофиксация обязательна: приложите минимум одно фото",
+                "code": "bad_request",
+            },
+        )
+    return saved_ids
+
+
 @router.get("/inspections", response_model=list[Inspection], summary="Список проверок")
 def list_inspections(repo: StoreDep, user: User = Depends(get_current_user)):
     items = repo.list_inspections()
@@ -31,7 +77,7 @@ def add_inspection(oid: str, body: CreateInspectionRequest, repo: StoreDep, user
     if obj is None:
         raise HTTPException(404, detail={"message": "Объект не найден", "code": "not_found"})
     ensure_object_access(repo, user, oid)
-    if not body.photos:
+    if not body.photos and not (body.inspection.photoIds or []):
         raise HTTPException(
             400,
             detail={"message": "Фотофиксация обязательна: приложите минимум одно фото", "code": "bad_request"},
@@ -40,8 +86,11 @@ def add_inspection(oid: str, body: CreateInspectionRequest, repo: StoreDep, user
     insp = body.inspection
     insp.objectId = oid
     repo.add_inspection(insp)
-    for ph in body.photos:
-        repo.add_photo_if_missing(ph, object_id=oid, inspection_id=insp.id)
+    insp.photoIds = _persist_inspection_photos(repo, oid=oid, insp_id=insp.id, body=body)
+    # Memory store keeps photoIds on the Inspection object
+    linked = repo.list_photos_for_inspection(insp.id)
+    if linked:
+        insp.photoIds = [p.id for p in linked]
 
     has_issues = insp.result == InspectionResult.has_remarks
     outcome = ObjectStatus.has_remarks if has_issues else ObjectStatus.compliant

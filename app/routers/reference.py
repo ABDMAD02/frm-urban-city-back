@@ -89,18 +89,43 @@ def add_object_type(body: ObjectTypeCreate, repo: StoreDep, user: User = Depends
 
 
 @router.get("/photos", response_model=list[Photo], summary="Метаданные фото")
-def list_photos(repo: StoreDep, user: User = Depends(get_current_user)):
+def list_photos(
+    repo: StoreDep,
+    user: User = Depends(get_current_user),
+    objectId: Optional[str] = Query(None),
+    ids: Optional[str] = Query(None, description="Comma-separated photo ids"),
+):
     from app.storage.object_store import resolve_readable_url
 
     allowed = accessible_object_ids(repo, user)
     items = repo.list_photos()
+    id_filter = {x.strip() for x in (ids or "").split(",") if x.strip()} or None
     out: list[Photo] = []
     for p in items:
-        if p.objectId not in allowed:
+        # objectId may be missing on legacy rows — still return them for admin resolve
+        if p.objectId is not None and p.objectId not in allowed:
+            continue
+        if objectId and p.objectId != objectId:
+            continue
+        if id_filter is not None and p.id not in id_filter:
             continue
         url = resolve_readable_url(p.url)
         out.append(p.model_copy(update={"url": url}) if url != p.url else p)
     return out
+
+
+@router.get("/photos/{pid}", response_model=Photo, summary="Одно фото по id")
+def get_photo(pid: str, repo: StoreDep, user: User = Depends(get_current_user)):
+    from app.storage.object_store import resolve_readable_url
+
+    photo = repo.find_photo(pid)
+    if photo is None:
+        raise HTTPException(404, detail={"message": "Фото не найдено", "code": "not_found"})
+    allowed = accessible_object_ids(repo, user)
+    if photo.objectId is not None and photo.objectId not in allowed:
+        raise HTTPException(403, detail={"message": "Нет доступа к фото", "code": "forbidden"})
+    url = resolve_readable_url(photo.url)
+    return photo.model_copy(update={"url": url}) if url != photo.url else photo
 
 
 @router.post("/photos", response_model=Photo, status_code=201, summary="Загрузить фото (файл)")
@@ -110,6 +135,10 @@ async def upload_photo(
     kind: PhotoKind = Form(PhotoKind.general),
     caption: str = Form(""),
     objectId: str = Form(..., description="Код объекта (o1, …)"),
+    id: Optional[str] = Form(
+        None,
+        description="Клиентский id (например ph-…). Если не передан — сервер выдаст pN",
+    ),
     user: User = Depends(get_current_user),
 ):
     from app.storage.object_store import (
@@ -155,8 +184,9 @@ async def upload_photo(
         # Local/dev fallback without R2 credentials.
         url = f"/media/{file.filename or 'photo.bin'}"
 
+    client_id = (id or "").strip()
     photo = Photo(
-        id="",
+        id=client_id,
         objectId=objectId,
         kind=kind,
         caption=caption,

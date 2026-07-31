@@ -430,18 +430,25 @@ class DbStore:
             obj = self._session.get(m.CityObject, existing.object_id) if existing.object_id else None
             if obj is not None:
                 self._ensure_same_region(obj.region_id)
+            obj_uid = self._object_uuid(object_id)
+            if obj_uid and existing.object_id != obj_uid:
+                existing.object_id = obj_uid
             if inspection_id:
                 insp_uid = self._resolve_uuid(m.Inspection, inspection_id)
-                if insp_uid and existing.inspection_id != insp_uid:
+                if insp_uid:
                     existing.inspection_id = insp_uid
-            if photo.url and not existing.url:
+            if photo.url:
                 existing.url = photo.url
-            if photo.caption and not existing.caption:
+            if photo.caption:
                 existing.caption = photo.caption
+            if photo.kind is not None:
+                existing.kind = photo.kind
+            if photo.author:
+                existing.author = photo.author
             self._session.flush()
             return mappers.photo(existing, object_code=self._object_code(existing.object_id))
 
-        code = photo.id or self.next_id("p")
+        code = (photo.id or "").strip() or self.next_id("p")
         obj_uid = self._object_uuid(object_id)
         if obj_uid is None:
             raise HTTPException(
@@ -462,11 +469,29 @@ class DbStore:
             color=photo.color or None,
             url=photo.url,
             date=_parse_date(photo.date) if photo.date else _parse_date(config.today_str()),
-            author=photo.author,
+            author=photo.author or "",
         )
         self._session.add(row)
         self._session.flush()
         return mappers.photo(row, object_code=object_id)
+
+    def find_photo(self, pid: str) -> Photo | None:
+        row = self._session.scalar(select(m.Photo).where(m.Photo.code == pid))
+        if row is None:
+            return None
+        obj = self._session.get(m.CityObject, row.object_id) if row.object_id else None
+        if obj is not None:
+            self._ensure_same_region(obj.region_id)
+        return mappers.photo(row, object_code=self._object_code(row.object_id))
+
+    def list_photos_for_inspection(self, inspection_id: str) -> list[Photo]:
+        insp_uid = self._resolve_uuid(m.Inspection, inspection_id)
+        if insp_uid is None:
+            return []
+        rows = self._session.scalars(
+            select(m.Photo).where(m.Photo.inspection_id == insp_uid)
+        ).all()
+        return [mappers.photo(r, object_code=self._object_code(r.object_id)) for r in rows]
 
     def add_prescription(self, pr: Prescription) -> Prescription:
         code = pr.id or self.next_id("pr")
