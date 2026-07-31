@@ -158,12 +158,23 @@ async def upload_photo(
     if not data:
         raise HTTPException(400, detail={"message": "Пустой файл", "code": "empty_file"})
 
+    from app.storage.image_normalize import normalize_image_for_web
+
+    try:
+        data, upload_name, upload_ctype = normalize_image_for_web(
+            data,
+            filename=file.filename,
+            content_type=file.content_type,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, detail={"message": str(exc), "code": "invalid_upload"}) from exc
+
     if r2_configured():
         try:
             url = upload_bytes(
                 data,
-                filename=file.filename,
-                content_type=file.content_type,
+                filename=upload_name,
+                content_type=upload_ctype,
                 object_id=objectId,
             )
         except ValueError as exc:
@@ -182,7 +193,7 @@ async def upload_photo(
         )
     else:
         # Local/dev fallback without R2 credentials.
-        url = f"/media/{file.filename or 'photo.bin'}"
+        url = f"/media/{upload_name or 'photo.bin'}"
 
     client_id = (id or "").strip()
     photo = Photo(
