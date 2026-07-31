@@ -90,9 +90,17 @@ def add_object_type(body: ObjectTypeCreate, repo: StoreDep, user: User = Depends
 
 @router.get("/photos", response_model=list[Photo], summary="Метаданные фото")
 def list_photos(repo: StoreDep, user: User = Depends(get_current_user)):
+    from app.storage.object_store import resolve_readable_url
+
     allowed = accessible_object_ids(repo, user)
     items = repo.list_photos()
-    return [p for p in items if p.objectId in allowed]
+    out: list[Photo] = []
+    for p in items:
+        if p.objectId not in allowed:
+            continue
+        url = resolve_readable_url(p.url)
+        out.append(p.model_copy(update={"url": url}) if url != p.url else p)
+    return out
 
 
 @router.post("/photos", response_model=Photo, status_code=201, summary="Загрузить фото (файл)")
@@ -104,7 +112,12 @@ async def upload_photo(
     objectId: str = Form(..., description="Код объекта (o1, …)"),
     user: User = Depends(get_current_user),
 ):
-    from app.storage.object_store import R2NotConfiguredError, r2_configured, upload_bytes
+    from app.storage.object_store import (
+        R2NotConfiguredError,
+        r2_configured,
+        resolve_readable_url,
+        upload_bytes,
+    )
 
     if not objectId:
         raise HTTPException(400, detail={"message": "objectId обязателен", "code": "bad_request"})
@@ -151,7 +164,9 @@ async def upload_photo(
         date=config.today_str(),
         author=user.name,
     )
-    return repo.add_photo_if_missing(photo, object_id=objectId)
+    saved = repo.add_photo_if_missing(photo, object_id=objectId)
+    readable = resolve_readable_url(saved.url)
+    return saved.model_copy(update={"url": readable}) if readable != saved.url else saved
 
 
 @router.get("/history", response_model=list[HistoryEvent], summary="Лента событий")

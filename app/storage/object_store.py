@@ -1,4 +1,8 @@
-"""Cloudflare R2 object storage (S3-compatible API via boto3)."""
+"""Cloudflare R2 object storage (S3-compatible API via boto3).
+
+В БД храним стабильный ключ объекта (``photos/...``) или публичный URL.
+Подписанный GET (SigV4) выдаём только при отдаче клиенту — иначе TTL протухнет.
+"""
 from __future__ import annotations
 
 import mimetypes
@@ -6,6 +10,7 @@ import re
 import uuid
 from functools import lru_cache
 from typing import Optional
+from urllib.parse import unquote, urlparse
 
 import boto3
 from botocore.client import BaseClient
@@ -66,6 +71,85 @@ def public_url_for_key(key: str) -> str:
     return f"{endpoint}/{config.R2_BUCKET}/{key}"
 
 
+def extract_object_key(stored: str) -> str | None:
+    """Достаёт R2 object key из ключа или полного URL (в т.ч. уже сохранённых private URL)."""
+    s = (stored or "").strip()
+    if not s or s.startswith("/"):
+        return None
+    if s.startswith("photos/"):
+        return s
+
+    pub = (config.R2_PUBLIC_BASE_URL or "").rstrip("/")
+    if pub and s.startswith(pub + "/"):
+        return unquote(s[len(pub) + 1 :])
+
+    endpoint = (config.R2_ENDPOINT_URL or "").rstrip("/")
+    bucket = config.R2_BUCKET
+    if endpoint and bucket:
+        prefix = f"{endpoint}/{bucket}/"
+        if s.startswith(prefix):
+            return unquote(s[len(prefix) :])
+
+    parsed = urlparse(s)
+    if not parsed.scheme:
+        return None
+    path = unquote(parsed.path.lstrip("/"))
+    if bucket and path.startswith(f"{bucket}/"):
+        return path[len(bucket) + 1 :]
+    if path.startswith("photos/"):
+        return path
+    # Hosted style: /photos/... still in path after bucket strip failed
+    marker = "/photos/"
+    idx = s.find(marker)
+    if idx >= 0:
+        return unquote(s[idx + 1 :])  # photos/...
+    return None
+
+
+def generate_presigned_get(key: str, *, expires_in: int | None = None) -> str:
+    ttl = expires_in if expires_in is not None else config.R2_PRESIGN_TTL_SECONDS
+    return _client().generate_presigned_url(
+        "get_object",
+        Params={"Bucket": config.R2_BUCKET, "Key": key},
+        ExpiresIn=max(60, int(ttl)),
+    )
+
+
+def resolve_readable_url(stored: str | None, *, expires_in: int | None = None) -> str | None:
+    """URL для клиента: публичный / local / fresh presigned GET.
+
+    Подпись создаётся здесь, а не пишется в БД.
+    """
+    if not stored:
+        return None
+    s = stored.strip()
+    if not s:
+        return None
+    # Local/dev fallback without R2
+    if s.startswith("/"):
+        return s
+
+    pub = (config.R2_PUBLIC_BASE_URL or "").rstrip("/")
+    if pub and s.startswith(pub + "/"):
+        return s
+
+    key = extract_object_key(s)
+    if key and r2_configured():
+        # Public CDN configured → stable public URL (no signature needed)
+        if pub:
+            return f"{pub}/{key}"
+        try:
+            return generate_presigned_get(key, expires_in=expires_in)
+        except Exception:
+            # Don't break listing if signing fails — return stored value
+            return s
+
+    # Already a bare key without R2 configured (memory/tests)
+    if s.startswith("photos/"):
+        return s
+    return s
+
+
 def upload_bytes(
     data: bytes,
     *,
@@ -73,7 +157,7 @@ def upload_bytes(
     content_type: Optional[str],
     object_id: Optional[str] = None,
 ) -> str:
-    """Upload file bytes to R2 and return a public URL for photo.url."""
+    """Upload to R2; return value to persist in photo.url (key or public URL, never presigned)."""
     if not data:
         raise ValueError("empty file")
     if len(data) > config.R2_MAX_UPLOAD_BYTES:
@@ -95,7 +179,10 @@ def upload_bytes(
         Body=data,
         **extra,
     )
-    return public_url_for_key(key)
+    # Persist stable reference. Presign only when serving to clients.
+    if config.R2_PUBLIC_BASE_URL:
+        return public_url_for_key(key)
+    return key
 
 
 def reset_client_cache() -> None:
