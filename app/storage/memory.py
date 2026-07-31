@@ -254,18 +254,31 @@ class MemoryStore:
         if photo.id:
             existing = next((p for p in store.PHOTOS if p.id == photo.id), None)
             if existing is not None:
-                if not existing.objectId:
-                    existing.objectId = object_id
-                if photo.url and not existing.url:
+                existing.objectId = object_id or existing.objectId
+                if photo.url:
                     existing.url = photo.url
-                if photo.caption and not existing.caption:
+                if photo.caption:
                     existing.caption = photo.caption
+                if photo.kind is not None:
+                    existing.kind = photo.kind
+                if photo.author:
+                    existing.author = photo.author
                 return existing
         if not photo.id:
             photo.id = store.next_id("p")
         photo.objectId = object_id
         store.PHOTOS.append(photo)
         return photo
+
+    def find_photo(self, pid: str) -> Photo | None:
+        return next((p for p in store.PHOTOS if p.id == pid), None)
+
+    def list_photos_for_inspection(self, inspection_id: str) -> list[Photo]:
+        insp = next((i for i in store.INSPECTIONS if i.id == inspection_id), None)
+        if insp is None:
+            return []
+        ids = set(insp.photoIds or [])
+        return [p for p in store.PHOTOS if p.id in ids]
 
     def add_prescription(self, pr: Prescription) -> Prescription:
         if not pr.id:

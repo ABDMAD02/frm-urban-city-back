@@ -79,12 +79,70 @@ check(
     "GET /photos includes uploaded",
     any(p["id"] == upload.json()["id"] and p.get("objectId") == "o1" for p in photos_after),
 )
+# Client id on upload → same id in inspection.photoIds → GET /photos resolves it
+client_ph = "ph-smoke-client-1"
+up_client = c.post(
+    f"{B}/photos",
+    headers=admin_h,
+    files={"file": ("b.jpg", b"\xff\xd8\xffclient", "image/jpeg")},
+    data={"kind": "general", "caption": "client-id", "objectId": "o1", "id": client_ph},
+)
+check(
+    "POST /photos with client id",
+    up_client.status_code == 201 and up_client.json().get("id") == client_ph,
+)
+o_flow = c.post(
+    f"{B}/objects",
+    json={"name": "Photo-persist", "type": "Магазин", "lat": 51.22, "lng": 51.32},
+    headers=admin_h,
+)
+oid_flow = o_flow.json()["id"]
+c.patch(f"{B}/objects/{oid_flow}", json={"patch": {"status": "not_inspected"}, "note": "ok"}, headers=admin_h)
+# re-upload bound to new object with same client id pattern
+client_ph2 = "ph-smoke-client-2"
+c.post(
+    f"{B}/photos",
+    headers=admin_h,
+    files={"file": ("c.jpg", b"\xff\xd8\xffc", "image/jpeg")},
+    data={"kind": "before", "caption": "flow", "objectId": oid_flow, "id": client_ph2},
+)
+insp_flow = c.post(
+    f"{B}/objects/{oid_flow}/inspections",
+    headers=admin_h,
+    json={
+        "inspection": {
+            "id": "",
+            "objectId": oid_flow,
+            "inspector": "Тест",
+            "date": "2026-07-02",
+            "result": "compliant",
+            "checklist": [],
+            "photoIds": [client_ph2],
+        },
+        "status": "compliant",
+        "photos": [],
+    },
+)
+check(
+    "POST inspection photoIds-only (pre-uploaded) → 201",
+    insp_flow.status_code == 201 and client_ph2 in insp_flow.json()["inspection"]["photoIds"],
+)
+photos_flow = c.get(f"{B}/photos", headers=admin_h, params={"ids": client_ph2}).json()
+check(
+    "GET /photos?ids= resolves inspection photo",
+    len(photos_flow) == 1
+    and photos_flow[0]["id"] == client_ph2
+    and photos_flow[0].get("objectId") == oid_flow
+    and bool(photos_flow[0].get("url")),
+)
+one = c.get(f"{B}/photos/{client_ph2}", headers=admin_h)
+check("GET /photos/{id} → 200", one.status_code == 200 and one.json()["id"] == client_ph2)
 check("GET /inspections", c.get(f"{B}/inspections", headers=admin_h).status_code == 200)
 check("GET /prescriptions", c.get(f"{B}/prescriptions", headers=admin_h).status_code == 200)
 check("GET /owners", len(c.get(f"{B}/owners", headers=admin_h).json()) == 8)
 check("GET /districts", len(c.get(f"{B}/districts", headers=admin_h).json()) == 3)
 check("GET /object-types", "Билборд" in c.get(f"{B}/object-types", headers=admin_h).json())
-check("GET /analytics/summary", c.get(f"{B}/analytics/summary", headers=admin_h).json()["total"] == 34)
+check("GET /analytics/summary", c.get(f"{B}/analytics/summary", headers=admin_h).json()["total"] >= 34)
 check("GET /analytics/status-distribution", isinstance(c.get(f"{B}/analytics/status-distribution", headers=admin_h).json(), dict))
 check("GET /geocode/reverse auth", c.get(f"{B}/geocode/reverse", params={"lat": 51.2, "lng": 51.3}, headers=admin_h).status_code == 200)
 
