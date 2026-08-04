@@ -254,7 +254,8 @@ class MemoryPlatformStore:
             RegionStatus.trial: {RegionStatus.active, RegionStatus.suspended, RegionStatus.archived},
             RegionStatus.active: {RegionStatus.suspended, RegionStatus.archived},
             RegionStatus.suspended: {RegionStatus.active, RegionStatus.archived},
-            RegionStatus.archived: set(),
+            # Unarchive: client sends status=active directly.
+            RegionStatus.archived: {RegionStatus.active},
         }
         if status != row.status and status not in transitions.get(row.status, set()):
             raise ValueError("invalid_status_transition")

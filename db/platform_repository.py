@@ -52,7 +52,8 @@ _STATUS_TRANSITIONS: dict[RegionStatus, set[RegionStatus]] = {
     RegionStatus.trial: {RegionStatus.active, RegionStatus.suspended, RegionStatus.archived},
     RegionStatus.active: {RegionStatus.suspended, RegionStatus.archived},
     RegionStatus.suspended: {RegionStatus.active, RegionStatus.archived},
-    RegionStatus.archived: set(),
+    # Unarchive: client sends status=active directly.
+    RegionStatus.archived: {RegionStatus.active},
 }
 
 _STATUS_AUDIT = {
