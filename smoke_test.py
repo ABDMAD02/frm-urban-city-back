@@ -623,6 +623,23 @@ check(
     len(c.get(f"{B}/checklist-template", headers=city_h).json()) == 6,
 )
 
+# unarchive: archived → active
+arch = c.patch(
+    f"{B}/platform/regions/smoke-city/status",
+    headers=sa_h,
+    json={"status": "archived"},
+)
+check("PATCH region → archived", arch.status_code == 200 and arch.json().get("status") == "archived")
+unarch = c.patch(
+    f"{B}/platform/regions/smoke-city/status",
+    headers=sa_h,
+    json={"status": "active"},
+)
+check(
+    "PATCH archived → active (unarchive)",
+    unarch.status_code == 200 and unarch.json().get("status") == "active",
+)
+
 # отправка предписания по email
 pid = c.get(f"{B}/prescriptions", headers=admin_h).json()[0]["id"]
 snd = c.post(f"{B}/prescriptions/{pid}/send", json={}, headers=admin_h)
