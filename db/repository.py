@@ -159,8 +159,44 @@ class DbStore:
         return f"{prefix}{self._counters[prefix]}"
 
     # ── objects ───────────────────────────────────────────────────
+    def _require_owner_uuid(self, owner_id: str | None, *, region_id: str) -> uuid.UUID:
+        """Resolve public owner id (w11) → UUID; 422 if missing / wrong region."""
+        from fastapi import HTTPException
+
+        public = owner_id or "w4"
+        uid = self._resolve_uuid(m.Owner, public)
+        row = self._session.get(m.Owner, uid) if uid else None
+        if row is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": f"ownerId must reference an existing Owner (got {public!r})",
+                    "code": "invalid_owner",
+                },
+            )
+        if row.region_id and row.region_id != region_id:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "ownerId must belong to the same region",
+                    "code": "invalid_owner_region",
+                },
+            )
+        return row.id
+
+    def _city_object_dto(self, row: m.CityObject) -> CityObject:
+        # Ensure relationship is loaded so mapper returns short code (w11), not UUID.
+        if row.owner_id and row.__dict__.get("owner") is None:
+            row.owner = self._session.get(m.Owner, row.owner_id)
+        if row.street_id and row.__dict__.get("street_row") is None:
+            row.street_row = self._session.get(m.Street, row.street_id)
+        return mappers.city_object(row)
+
     def list_objects(self) -> list[CityObject]:
-        q = select(m.CityObject)
+        q = select(m.CityObject).options(
+            selectinload(m.CityObject.owner),
+            selectinload(m.CityObject.street_row),
+        )
         if self._region_id:
             q = q.where(m.CityObject.region_id == self._region_id)
         rows = self._session.scalars(q).all()
@@ -170,11 +206,18 @@ class DbStore:
         uid = self._object_uuid(oid)
         if uid is None:
             return None
-        row = self._session.get(m.CityObject, uid)
+        row = self._session.get(
+            m.CityObject,
+            uid,
+            options=(
+                selectinload(m.CityObject.owner),
+                selectinload(m.CityObject.street_row),
+            ),
+        )
         if row is None:
             return None
         self._ensure_same_region(row.region_id)
-        return mappers.city_object(row)
+        return self._city_object_dto(row)
 
     def create_object(self, body: CreateObjectRequest, actor: User) -> CityObject:
         from app.address import DEFAULT_ADDRESS_SCHEMA, build_address
@@ -182,7 +225,7 @@ class DbStore:
         region_id = actor.regionId or self._region_id or "uralsk"
         self._assert_object_limit(region_id)
         code = self.next_id("o")
-        owner_uid = self._resolve_uuid(m.Owner, body.ownerId or "w4")
+        owner_uid = self._require_owner_uuid(body.ownerId, region_id=region_id)
         district_id = body.districtId
         microdistrict_id = body.microdistrictId
         street_uid = self._resolve_uuid(m.Street, body.streetId) if body.streetId else None
@@ -241,7 +284,7 @@ class DbStore:
                 text="Объект создан и добавлен на карту",
             )
         )
-        return mappers.city_object(row)
+        return self._city_object_dto(row)
 
     def _assert_object_limit(self, region_id: str) -> None:
         from db.platform_repository import PlatformStore
@@ -292,7 +335,11 @@ class DbStore:
                 "streetId": "street_id",
             }.get(k, k)
             if attr == "owner_id" and v is not None:
-                setattr(row, attr, self._resolve_uuid(m.Owner, v))
+                region_id = row.region_id or self._region_id or "uralsk"
+                row.owner_id = self._require_owner_uuid(v, region_id=region_id)
+                # Drop cached relationship so DTO reloads the new owner code.
+                if "owner" in row.__dict__:
+                    del row.__dict__["owner"]
             elif attr == "street_id":
                 street_uid = self._resolve_uuid(m.Street, v) if v else None
                 if street_uid:
@@ -301,6 +348,8 @@ class DbStore:
                         self._ensure_same_region(st.region_id)
                         row.street = st.name
                 row.street_id = street_uid
+                if "street_row" in row.__dict__:
+                    del row.__dict__["street_row"]
             elif hasattr(row, attr):
                 setattr(row, attr, v)
         if rebuild_address:
@@ -329,7 +378,7 @@ class DbStore:
             date=config.today_str(), text=note or "Карточка объекта обновлена",
         ))
         self._session.flush()
-        return mappers.city_object(row)
+        return self._city_object_dto(row)
 
     def set_object_status(self, oid: str, status: ObjectStatus) -> CityObject | None:
         uid = self._object_uuid(oid)
@@ -340,7 +389,7 @@ class DbStore:
         row.status = status
         row.updated_at = _parse_date(config.today_str())
         self._session.flush()
-        return mappers.city_object(row)
+        return self._city_object_dto(row)
 
     def delete_object(self, oid: str, actor: User) -> CityObject | None:
         """Soft-delete: status → archived (DB trigger forbids physical DELETE)."""
@@ -364,7 +413,7 @@ class DbStore:
             )
         )
         self._session.flush()
-        return mappers.city_object(row)
+        return self._city_object_dto(row)
 
     # ── inspections / prescriptions ───────────────────────────────
     def list_inspections(self) -> list[Inspection]:

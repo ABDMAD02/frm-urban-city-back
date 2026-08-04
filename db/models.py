@@ -334,6 +334,9 @@ class CityObject(Base):
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
+    owner: Mapped[Optional["Owner"]] = relationship(foreign_keys=[owner_id])
+    street_row: Mapped[Optional["Street"]] = relationship(foreign_keys=[street_id])
+
     __mapper_args__ = {"version_id_col": version}
 
 

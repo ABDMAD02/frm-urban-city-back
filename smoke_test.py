@@ -176,6 +176,46 @@ new = c.post(f"{B}/objects", json={"name": "Тест-объект", "type": "М�
 check("POST /objects → new", new.status_code == 201 and new.json()["status"] == "new")
 nid = new.json()["id"]
 
+# ownerId must round-trip as public business id (w2), never internal UUID
+owned = c.post(
+    f"{B}/objects",
+    json={
+        "name": "Объект владельца",
+        "type": "Магазин",
+        "lat": 51.21,
+        "lng": 51.31,
+        "ownerId": "w2",
+    },
+    headers=admin_h,
+)
+check(
+    "POST /objects ownerId=w2 → response ownerId=w2",
+    owned.status_code == 201 and owned.json().get("ownerId") == "w2",
+)
+owned_id = owned.json()["id"] if owned.status_code == 201 else None
+if owned_id:
+    got = c.get(f"{B}/objects/{owned_id}", headers=admin_h)
+    check(
+        "GET /objects/{id} keeps ownerId=w2",
+        got.status_code == 200 and got.json().get("ownerId") == "w2",
+    )
+    patched = c.patch(
+        f"{B}/objects/{owned_id}",
+        json={"patch": {"ownerId": "w1"}},
+        headers=admin_h,
+    )
+    check(
+        "PATCH /objects patch.ownerId=w1 → ownerId=w1",
+        patched.status_code == 200 and patched.json().get("ownerId") == "w1",
+    )
+    # restore for later owner-scope checks on w2 seed objects
+    c.patch(
+        f"{B}/objects/{owned_id}",
+        json={"patch": {"ownerId": "w2"}},
+        headers=admin_h,
+    )
+    c.delete(f"{B}/objects/{owned_id}", headers=admin_h)
+
 # FSM: недопустимый переход new → closed = 409
 bad = c.patch(f"{B}/objects/{nid}", json={"patch": {"status": "closed"}}, headers=admin_h)
 check("PATCH недопустимый переход → 409", bad.status_code == 409)
