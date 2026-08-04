@@ -69,7 +69,17 @@ def user(row: orm.AppUser, *, microdistrict_ids: list[str] | None = None, owner_
     )
 
 
-def city_object(row: orm.CityObject) -> dto.CityObject:
+def city_object(
+    row: orm.CityObject,
+    *,
+    owner_id: str | None = None,
+    street_id: str | None = None,
+) -> dto.CityObject:
+    """Map ORM → API. Public owner/street ids are short codes (w11), never raw UUIDs."""
+    if owner_id is None:
+        owner_id = _owner_public_id(row)
+    if street_id is None and getattr(row, "street_id", None):
+        street_id = _street_public_id(row)
     return dto.CityObject(
         id=_code(row),
         name=row.name,
@@ -81,10 +91,10 @@ def city_object(row: orm.CityObject) -> dto.CityObject:
         districtId=row.district_id,
         microdistrictId=row.microdistrict_id,
         street=row.street,
-        streetId=_street_code(row.street_id) if getattr(row, "street_id", None) else None,
+        streetId=street_id,
         house=getattr(row, "house", None),
         apartment=getattr(row, "apartment", None),
-        ownerId=_owner_code(row.owner_id) if row.owner_id else "w4",
+        ownerId=owner_id,
         status=ObjectStatus(row.status.value),
         responsible=row.responsible or "",
         createdAt=_d(row.created_at),
@@ -111,6 +121,35 @@ def _street_code(uid: uuid.UUID | None) -> str | None:
     if uid is None:
         return None
     return _STREET_UUID_TO_CODE.get(uid) or str(uid)
+
+
+def _owner_public_id(row: orm.CityObject) -> str:
+    """Prefer Owner.code via relationship; fall back to module map / UUID string."""
+    if not row.owner_id:
+        return "w4"
+    owner = row.__dict__.get("owner")
+    if owner is None:
+        try:
+            owner = row.owner
+        except Exception:
+            owner = None
+    if owner is not None:
+        return owner.code or str(owner.id)
+    return _owner_code(row.owner_id)
+
+
+def _street_public_id(row: orm.CityObject) -> str | None:
+    if not getattr(row, "street_id", None):
+        return None
+    street = row.__dict__.get("street_row")
+    if street is None:
+        try:
+            street = row.street_row
+        except Exception:
+            street = None
+    if street is not None:
+        return street.code or str(street.id)
+    return _street_code(row.street_id)
 
 
 def checklist_template(row: orm.ChecklistTemplate) -> dto.ChecklistTemplateItem:
