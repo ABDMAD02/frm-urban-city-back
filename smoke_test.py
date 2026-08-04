@@ -312,6 +312,17 @@ bad_link = c.post(
 )
 check("POST /owners ownerUserId=urbanist → 422", bad_link.status_code == 422)
 
+# PATCH без ownerUserId не должен затирать связь
+patch_keep = c.patch(
+    f"{B}/owners/{biz1.json()['id']}",
+    headers=admin_h,
+    json={"name": "ТОО Альфа (правка)", "legalForm": "ТОО", "phone": "+77001110001"},
+)
+check(
+    "PATCH /owners omit ownerUserId → keeps link",
+    patch_keep.status_code == 200 and patch_keep.json().get("ownerUserId") == own_uid,
+)
+
 bad_bin = c.post(
     f"{B}/owners",
     json={
