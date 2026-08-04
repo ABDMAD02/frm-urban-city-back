@@ -446,8 +446,13 @@ class MemoryStore:
         owner = self.find_owner(wid)
         if owner is None:
             return None
-        if body.ownerUserId:
-            user = self.find_user_by_id(body.ownerUserId)
+        data = body.model_dump()
+        # Preserve existing link unless caller explicitly sends ownerUserId
+        # (including null to unlink).
+        if "ownerUserId" not in body.model_fields_set:
+            data.pop("ownerUserId", None)
+        elif data.get("ownerUserId"):
+            user = self.find_user_by_id(data["ownerUserId"])
             if user is None or user.role != Role.owner:
                 raise HTTPException(
                     422,
@@ -456,7 +461,7 @@ class MemoryStore:
                         "code": "invalid_owner_user",
                     },
                 )
-        for k, v in body.model_dump().items():
+        for k, v in data.items():
             setattr(owner, k, v)
         return owner
 

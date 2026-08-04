@@ -843,13 +843,17 @@ class DbStore:
             return None
         self._ensure_same_region(row.region_id)
         region_id = row.region_id or self._region_id or "uralsk"
-        account_uid = self._resolve_owner_account(body.ownerUserId, region_id=region_id)
         row.name = body.name
         row.legal_form = body.legalForm
         row.bin = body.bin
         row.phone = body.phone
         row.email = body.email
-        row.owner_user_id = account_uid
+        # Preserve existing link unless caller explicitly sends ownerUserId
+        # (including null to unlink).
+        if "ownerUserId" in body.model_fields_set:
+            row.owner_user_id = self._resolve_owner_account(
+                body.ownerUserId, region_id=region_id
+            )
         self._session.flush()
         return self._owner_dto(row)
 
