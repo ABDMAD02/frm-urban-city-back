@@ -155,6 +155,27 @@ def _ensure_platform_bootstrap(session: Session, region_id: str = DEFAULT_REGION
             "valid_until": today + timedelta(days=365),
         },
     )
+
+    # Дизайн-код города. На пустой базе миграция 0005 его пропускает — региона
+    # там ещё не существует, — поэтому засеваем здесь, после создания региона.
+    from app.address import DEFAULT_CHECKLIST_ITEMS
+
+    for item in DEFAULT_CHECKLIST_ITEMS:
+        session.execute(
+            text(
+                """
+                INSERT INTO checklist_template (
+                  id, region_id, key, title_ru, title_kz, category, sort_order, is_visible
+                )
+                VALUES (
+                  gen_random_uuid(), :region_id, :key, :title_ru, :title_kz,
+                  :category, :sort_order, true
+                )
+                ON CONFLICT (region_id, key) DO NOTHING
+                """
+            ),
+            {"region_id": region_id, **item},
+        )
     session.flush()
 
 
