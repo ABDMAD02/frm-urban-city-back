@@ -1,6 +1,7 @@
 """FastAPI-зависимость: in-memory или PostgreSQL."""
 from __future__ import annotations
 
+import logging
 from collections.abc import Generator
 from typing import Annotated, Optional, Union
 
@@ -15,6 +16,8 @@ from db.base import SessionLocal, get_engine
 from db.repository import DbStore
 
 Store = Union[MemoryStore, DbStore]
+
+logger = logging.getLogger(__name__)
 
 _memory = MemoryStore()
 _bearer = HTTPBearer(auto_error=False)
@@ -45,7 +48,12 @@ def get_store(
                         _memory.set_region("uralsk")
                 else:
                     _memory.set_region("uralsk")
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "JWT resolve failed (memory store), falling back to region 'uralsk': %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
                 _memory.set_region("uralsk")
         else:
             _memory.set_region("uralsk")
@@ -73,7 +81,12 @@ def get_store(
                     repo.set_region("uralsk")
             else:
                 repo.set_region("uralsk")
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "JWT resolve failed (db store), falling back to region 'uralsk': %s: %s",
+                type(exc).__name__,
+                exc,
+            )
             repo.set_region("uralsk")
     try:
         yield repo

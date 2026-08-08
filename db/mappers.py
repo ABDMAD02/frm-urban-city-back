@@ -1,6 +1,7 @@
 """ORM ↔ Pydantic (app/models.py). Публичный id — колонка ``code``."""
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date, datetime
 
@@ -18,6 +19,8 @@ from app.enums import (
     Role,
 )
 from db import models as orm
+
+logger = logging.getLogger(__name__)
 
 
 def _d(v: date | datetime | str | None) -> str:
@@ -106,14 +109,20 @@ def city_object(
 
 
 def _owner_public_id(row: orm.CityObject) -> str:
-    """Prefer Owner.code via relationship; fall back to module map / UUID string."""
+    """Публичный код владельца (w11) из загруженной связи; фолбэк — строка UUID."""
     if not row.owner_id:
         return "w4"
     owner = row.__dict__.get("owner")
     if owner is None:
         try:
             owner = row.owner
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                "Lazy-load of Owner relation failed for owner_id=%s, falling back to UUID: %s: %s",
+                row.owner_id,
+                type(exc).__name__,
+                exc,
+            )
             owner = None
     if owner is not None:
         return owner.code or str(owner.id)
@@ -127,7 +136,13 @@ def _street_public_id(row: orm.CityObject) -> str | None:
     if street is None:
         try:
             street = row.street_row
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                "Lazy-load of Street relation failed for street_id=%s, falling back to UUID: %s: %s",
+                getattr(row, "street_id", None),
+                type(exc).__name__,
+                exc,
+            )
             street = None
     if street is not None:
         return street.code or str(street.id)

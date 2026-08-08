@@ -7,6 +7,7 @@ Swagger:   http://localhost:8000/docs     ·     ReDoc: http://localhost:8000/re
 Роуты монтируются под /api/v1."""
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import asynccontextmanager
 import json
@@ -24,6 +25,8 @@ from .routers import (
     auth, objects, inspections, prescriptions, users, reference, analytics, misc, platform,
 )
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -32,9 +35,8 @@ async def lifespan(app: FastAPI):
         init_database()
     except Exception:
         # Иначе gunicorn пишет только «Worker failed to boot» без traceback.
-        import traceback
-
-        traceback.print_exc()
+        # Структурный лог с трейсбеком вместо print — попадает в общий logging pipeline.
+        logger.exception("Application startup failed during lifespan init")
         raise
     yield
 
@@ -142,6 +144,12 @@ async def request_validation_exception_handler(request: Request, exc: RequestVal
 
 @app.exception_handler(OperationalError)
 async def database_operational_error_handler(request: Request, exc: OperationalError):
+    logger.warning(
+        "OperationalError on %s %s: %s",
+        request.method,
+        request.url.path,
+        exc,
+    )
     return JSONResponse(
         status_code=503,
         content={
@@ -155,6 +163,12 @@ async def database_operational_error_handler(request: Request, exc: OperationalE
 async def database_integrity_error_handler(request: Request, exc: IntegrityError):
     """DB check/unique violations → 422 instead of opaque 500."""
     raw = str(getattr(exc, "orig", None) or exc)
+    logger.warning(
+        "IntegrityError on %s %s: %s",
+        request.method,
+        request.url.path,
+        raw,
+    )
     if "bin_format" in raw:
         message, code = "БИН/ИИН должен состоять из 12 цифр", "invalid_bin"
     elif "email_format" in raw:
