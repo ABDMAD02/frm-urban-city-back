@@ -99,3 +99,26 @@ def test_tc9_bulk_assign_idempotent(client, region_admin):
                     headers=region_admin)
     assert r.status_code == 200, r.text
     assert r.json()["assigned"] == 2
+
+
+def test_coverage_summary(client, region_admin, urbanist):
+    client.patch(f"{API}/users/u1", json={"microdistrictIds": ["m1"]}, headers=region_admin)
+    _make_object(client, region_admin, md="m1")   # в зоне u1
+    _make_object(client, region_admin, md="m2")   # нераспределённый
+    cov = client.get(f"{API}/coverage/summary", headers=region_admin).json()
+    u1_row = next(r for r in cov["urbanists"] if r["urbanistId"] == "u1")
+    assert u1_row["objects"] >= 1
+    assert cov["unassigned"] >= 1
+
+
+def test_reset_password_keeps_enum_status(client, region_admin):
+    # регресс: memory update_user ставил status строкой "active" → ломал .value
+    uid, login, _pw = _new_urbanist_with_creds(client, region_admin, "Сброс Пароля")
+    reset = client.patch(f"{API}/users/{uid}", json={"resetPassword": True}, headers=region_admin)
+    assert reset.status_code == 200, reset.text
+    new_pw = reset.json()["credentials"]["tempPassword"]
+    # вход по новому паролю не должен падать 500 (status теперь enum)
+    r = client.post(f"{API}/auth/v2/login", json={"email": login, "password": new_pw})
+    assert r.status_code == 200, r.text
+    me = client.get(f"{API}/auth/me", headers={"Authorization": f"Bearer {r.json()['access_token']}"})
+    assert me.status_code == 200, me.text

@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from app import config, store
 from app.address import DEFAULT_ADDRESS_SCHEMA, DEFAULT_CHECKLIST_ITEMS, build_address
 from app.domain_rules import effective_prescription_status
-from app.enums import HistoryType, ObjectStatus
+from app.enums import AccountStatus, HistoryType, ObjectStatus
 from app.models import (
     ChecklistTemplateItem,
     ChecklistTemplateManageItem,
@@ -411,7 +411,7 @@ class MemoryStore:
         if body.streetIds is not None:
             user.streetIds = body.streetIds
         if body.resetPassword:
-            user.status = "active"
+            user.status = AccountStatus.active
             plain = random_temp_password()
             self._password_hashes[user.id] = hash_password(plain)
             creds = Credentials(login=user.login or "", tempPassword=plain)

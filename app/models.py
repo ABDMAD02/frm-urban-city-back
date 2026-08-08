@@ -189,6 +189,17 @@ class BulkAssignObjectsResult(BaseModel):
     assigned: int
 
 
+class CoverageUrbanist(BaseModel):
+    urbanistId: str
+    name: str
+    objects: int          # объекты в скоупе (зона + явные назначения)
+
+
+class CoverageSummary(BaseModel):
+    urbanists: list[CoverageUrbanist] = Field(default_factory=list)
+    unassigned: int       # нераспределённые объекты региона (BR-3)
+
+
 class ObjectPatch(BaseModel):
     name: str | None = None
     type: str | None = None

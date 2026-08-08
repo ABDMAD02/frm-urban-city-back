@@ -12,6 +12,8 @@ from ..models import (
     BulkDeleteObjectsRequest,
     BulkDeleteObjectsResult,
     CityObject,
+    CoverageSummary,
+    CoverageUrbanist,
     CreateObjectRequest,
     ObjectPatch,
     UpdateObjectRequest,
@@ -166,6 +168,32 @@ def list_unassigned_objects(repo: StoreDep, user: User = Depends(require_region_
         if not in_zone:
             out.append(o)
     return out
+
+
+@router.get(
+    "/coverage/summary",
+    response_model=CoverageSummary,
+    summary="Покрытие: нагрузка урбанистов + нераспределённые (только администратор района)",
+)
+def coverage_summary(repo: StoreDep, user: User = Depends(require_region_admin)):
+    """Проактивное удобство (§5.3): по каждому урбанисту — объекты в скоупе; отдельно unassigned."""
+    urbanists = [u for u in repo.list_users() if u.role == Role.urbanist]
+    zone_md: set[str] = set()
+    zone_st: set[str] = set()
+    for u in urbanists:
+        zone_md.update(u.microdistrictIds or [])
+        zone_st.update(u.streetIds or [])
+    rows = [
+        CoverageUrbanist(urbanistId=u.id, name=u.name, objects=len(accessible_object_ids(repo, u)))
+        for u in urbanists
+    ]
+    unassigned = 0
+    for o in _active(repo.list_objects()):
+        if o.assignedUrbanistId is None and not (
+            (o.microdistrictId in zone_md) or (o.streetId in zone_st)
+        ):
+            unassigned += 1
+    return CoverageSummary(urbanists=rows, unassigned=unassigned)
 
 
 @router.get("/objects/{oid}", response_model=CityObject, summary="Один объект")
