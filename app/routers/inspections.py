@@ -85,6 +85,10 @@ def add_inspection(oid: str, body: CreateInspectionRequest, repo: StoreDep, user
 
     insp = body.inspection
     insp.objectId = oid
+    # Сервер — источник истины: кто и когда провёл проверку, а не то, что прислал клиент.
+    insp.inspector = user.name
+    insp.inspectorId = user.id
+    insp.date = config.today_str()
     repo.add_inspection(insp)
     insp.photoIds = _persist_inspection_photos(repo, oid=oid, insp_id=insp.id, body=body)
     # Memory store keeps photoIds on the Inspection object

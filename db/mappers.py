@@ -180,10 +180,17 @@ def checklist_item(row: orm.ChecklistItem) -> dto.ChecklistItem:
 
 
 def inspection(row: orm.Inspection, *, object_code: str, photo_ids: list[str]) -> dto.Inspection:
+    inspector_user = row.__dict__.get("inspector_user")
+    inspector_code = None
+    if inspector_user is not None:
+        inspector_code = inspector_user.code or str(inspector_user.id)
+    elif row.inspector_id:
+        inspector_code = str(row.inspector_id)
     return dto.Inspection(
         id=_code(row),
         objectId=object_code,
         inspector=row.inspector,
+        inspectorId=inspector_code,
         date=_d(row.date),
         result=InspectionResult(row.result.value),
         checklist=[checklist_item(c) for c in row.checklist],

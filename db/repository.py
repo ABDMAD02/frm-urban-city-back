@@ -396,7 +396,10 @@ class DbStore:
 
     # ── inspections / prescriptions ───────────────────────────────
     def list_inspections(self) -> list[Inspection]:
-        q = select(m.Inspection).options(selectinload(m.Inspection.checklist))
+        q = select(m.Inspection).options(
+            selectinload(m.Inspection.checklist),
+            selectinload(m.Inspection.inspector_user),
+        )
         if self._region_id:
             q = q.join(m.CityObject, m.Inspection.object_id == m.CityObject.id).where(
                 m.CityObject.region_id == self._region_id
@@ -422,6 +425,7 @@ class DbStore:
             id=uuid_for_code(code),
             code=code,
             object_id=obj_uid,
+            inspector_id=self._resolve_uuid(m.AppUser, insp.inspectorId) if insp.inspectorId else None,
             inspector=insp.inspector,
             date=_parse_date(insp.date),
             result=insp.result,

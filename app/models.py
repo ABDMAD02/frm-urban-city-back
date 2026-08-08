@@ -68,6 +68,7 @@ class Inspection(BaseModel):
     id: str
     objectId: str
     inspector: str
+    inspectorId: str | None = None   # код сотрудника, проводившего проверку
     date: str
     result: InspectionResult
     checklist: list[ChecklistItem] = []

@@ -363,6 +363,7 @@ class Inspection(Base):
     checklist: Mapped[list[ChecklistItem]] = relationship(
         back_populates="inspection", cascade="all, delete-orphan"
     )
+    inspector_user: Mapped[Optional["AppUser"]] = relationship(foreign_keys=[inspector_id])
 
 
 # ── Пункты чек-листа проверки (под-агрегат) ───────────────────────
