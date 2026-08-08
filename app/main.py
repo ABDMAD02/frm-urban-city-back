@@ -39,11 +39,18 @@ async def lifespan(app: FastAPI):
     yield
 
 
+# В production закрываем интерактивную документацию и схему: анонимная карта
+# всех 66 ручек — лишняя поверхность для разведки. В dev остаётся открытой.
+_docs_enabled = config.ENV != "production"
+
 app = FastAPI(
     title="Urban City API",
     version="1.0.0",
     description="GovTech-платформа контроля дизайн-кода городской среды. Пилот — г. Уральск.",
     lifespan=lifespan,
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
 )
 
 app.add_middleware(
