@@ -53,8 +53,6 @@ class DbStore:
     def __init__(self, session: Session, *, region_id: str | None = "uralsk") -> None:
         self._session = session
         self._region_id = region_id
-        mappers.set_owner_code_map(self._owner_code_map())
-        mappers.set_street_code_map(self._street_code_map())
         self._counters = self._load_counters()
 
     def set_region(self, region_id: str | None) -> None:
@@ -80,26 +78,12 @@ class DbStore:
 
     def commit(self) -> None:
         self._session.commit()
-        mappers.set_owner_code_map(self._owner_code_map())
-        mappers.set_street_code_map(self._street_code_map())
 
     def rollback(self) -> None:
         self._session.rollback()
 
     # ── lookups ───────────────────────────────────────────────────
-    def _owner_code_map(self) -> dict[uuid.UUID, str]:
-        q = select(m.Owner.id, m.Owner.code)
-        if self._region_id:
-            q = q.where(m.Owner.region_id == self._region_id)
-        rows = self._session.execute(q)
-        return {r.id: r.code for r in rows if r.code}
 
-    def _street_code_map(self) -> dict[uuid.UUID, str]:
-        q = select(m.Street.id, m.Street.code)
-        if self._region_id:
-            q = q.where(m.Street.region_id == self._region_id)
-        rows = self._session.execute(q)
-        return {r.id: r.code for r in rows if r.code}
 
     def _object_uuid(self, code: str) -> uuid.UUID | None:
         row = self._session.scalar(select(m.CityObject).where(m.CityObject.code == code))
@@ -890,7 +874,6 @@ class DbStore:
         )
         self._session.add(row)
         self._session.flush()
-        mappers.set_owner_code_map(self._owner_code_map())
         return self._owner_dto(row)
 
     def update_owner(self, wid: str, body: CreateOwnerRequest) -> Owner | None:
@@ -1091,7 +1074,6 @@ class DbStore:
         if self._region_id:
             q = q.where(m.Street.region_id == self._region_id)
         q = q.order_by(m.Street.name)
-        mappers.set_street_code_map(self._street_code_map())
         return [mappers.street(r) for r in self._session.scalars(q).all()]
 
     def create_street(self, body: dto.StreetCreate) -> dto.Street:
@@ -1109,7 +1091,6 @@ class DbStore:
         )
         self._session.add(row)
         self._session.flush()
-        mappers.set_street_code_map(self._street_code_map())
         return mappers.street(row)
 
     def _street_row(self, sid: str) -> m.Street | None:
@@ -1134,7 +1115,6 @@ class DbStore:
         if "microdistrictId" in data:
             row.microdistrict_id = data["microdistrictId"]
         self._session.flush()
-        mappers.set_street_code_map(self._street_code_map())
         return mappers.street(row)
 
     def delete_street(self, sid: str) -> bool:
@@ -1143,7 +1123,6 @@ class DbStore:
             return False
         self._session.delete(row)
         self._session.flush()
-        mappers.set_street_code_map(self._street_code_map())
         return True
 
     def get_geo_config(self, city_id: str) -> dto.GeoConfig:

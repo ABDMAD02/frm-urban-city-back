@@ -103,25 +103,6 @@ def city_object(
     )
 
 
-# Заполняется репозиторием: owner uuid → code
-_OWNER_UUID_TO_CODE: dict[uuid.UUID, str] = {}
-_STREET_UUID_TO_CODE: dict[uuid.UUID, str] = {}
-
-
-def set_owner_code_map(mapping: dict[uuid.UUID, str]) -> None:
-    global _OWNER_UUID_TO_CODE
-    _OWNER_UUID_TO_CODE = mapping
-
-
-def set_street_code_map(mapping: dict[uuid.UUID, str]) -> None:
-    global _STREET_UUID_TO_CODE
-    _STREET_UUID_TO_CODE = mapping
-
-
-def _street_code(uid: uuid.UUID | None) -> str | None:
-    if uid is None:
-        return None
-    return _STREET_UUID_TO_CODE.get(uid) or str(uid)
 
 
 def _owner_public_id(row: orm.CityObject) -> str:
@@ -136,7 +117,7 @@ def _owner_public_id(row: orm.CityObject) -> str:
             owner = None
     if owner is not None:
         return owner.code or str(owner.id)
-    return _owner_code(row.owner_id)
+    return str(row.owner_id)
 
 
 def _street_public_id(row: orm.CityObject) -> str | None:
@@ -150,7 +131,7 @@ def _street_public_id(row: orm.CityObject) -> str | None:
             street = None
     if street is not None:
         return street.code or str(street.id)
-    return _street_code(row.street_id)
+    return str(row.street_id)
 
 
 def checklist_template(row: orm.ChecklistTemplate) -> dto.ChecklistTemplateItem:
@@ -172,12 +153,6 @@ def street(row: orm.Street) -> dto.Street:
         districtId=row.district_id,
         microdistrictId=row.microdistrict_id,
     )
-
-
-def _owner_code(uid: uuid.UUID | None) -> str:
-    if uid is None:
-        return "w4"
-    return _OWNER_UUID_TO_CODE.get(uid, str(uid))
 
 
 def checklist_item(row: orm.ChecklistItem) -> dto.ChecklistItem:
