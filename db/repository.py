@@ -892,9 +892,34 @@ class DbStore:
         self._ensure_same_region(row.region_id)
         return self._owner_dto(row)
 
-    def create_owner(self, body: CreateOwnerRequest) -> Owner:
+    def create_owner(self, body: CreateOwnerRequest) -> tuple[Owner, Credentials | None]:
+        from app.passwords import hash_password
+
         region_id = self._region_id or "uralsk"
-        account_uid = self._resolve_owner_account(body.ownerUserId, region_id=region_id)
+        creds: Credentials | None = None
+        if body.ownerUserId:
+            account_uid = self._resolve_owner_account(body.ownerUserId, region_id=region_id)
+        else:
+            # Логин владельца обязателен — авто-создаём аккаунт role=owner (temp-пароль).
+            ucode = self.next_id("u")
+            login = login_for(body.name)
+            plain = random_temp_password()
+            account = m.AppUser(
+                id=uuid_for_code(ucode),
+                code=ucode,
+                name=body.name.strip(),
+                role=Role.owner,
+                position="Владелец бизнеса",
+                login=login,
+                password_hash=hash_password(plain),
+                status=AccountStatus.active,
+                region_id=region_id,
+                created_at=_parse_date(config.today_str()),
+            )
+            self._session.add(account)
+            self._session.flush()
+            account_uid = account.id
+            creds = Credentials(login=login, tempPassword=plain)
         code = self.next_id("w")
         row = m.Owner(
             id=uuid_for_code(code),
@@ -909,7 +934,7 @@ class DbStore:
         )
         self._session.add(row)
         self._session.flush()
-        return self._owner_dto(row)
+        return self._owner_dto(row), creds
 
     def update_owner(self, wid: str, body: CreateOwnerRequest) -> Owner | None:
         uid = self._resolve_uuid(m.Owner, wid)

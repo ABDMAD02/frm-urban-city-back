@@ -21,7 +21,7 @@ def test_urbanist_can_create_owner(client, urbanist):
         headers=urbanist,
     )
     assert r.status_code == 201, r.text
-    assert r.json()["name"] == "ТОО Полевой"
+    assert r.json()["owner"]["name"] == "ТОО Полевой"
 
 
 def test_owner_still_scoped_to_own(client, owner):

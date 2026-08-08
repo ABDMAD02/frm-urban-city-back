@@ -261,6 +261,11 @@ class CreateUserResponse(BaseModel):
     credentials: Credentials
 
 
+class CreateOwnerResponse(BaseModel):
+    owner: Owner
+    credentials: Credentials | None = None   # логин владельца, авто-созданный при заведении бизнеса
+
+
 class UpdateUserRequest(BaseModel):
     status: AccountStatus | None = None
     resetPassword: bool | None = None

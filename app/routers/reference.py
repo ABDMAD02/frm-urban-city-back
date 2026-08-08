@@ -14,7 +14,7 @@ from ..security import (
     require_region_admin,
 )
 from ..models import (
-    Owner, CreateOwnerRequest, District, DistrictCreate, Microdistrict,
+    Owner, CreateOwnerRequest, CreateOwnerResponse, District, DistrictCreate, Microdistrict,
     MicrodistrictCreate, ObjectTypeCreate, Photo, HistoryEvent, ObjectVersion, User,
     ChecklistTemplateItem, ChecklistTemplateManageRequest, Street, StreetCreate, StreetPatch,
     GeoConfig, GeoConfigPatch, CurrentCity,
@@ -48,10 +48,12 @@ def list_my_owners(repo: StoreDep, user: User = Depends(get_current_user)):
     return repo.list_owners(owner_user_id=user.id)
 
 
-@router.post("/owners", response_model=Owner, status_code=201, summary="Создать собственника")
+@router.post("/owners", response_model=CreateOwnerResponse, status_code=201, summary="Создать собственника")
 def create_owner(body: CreateOwnerRequest, repo: StoreDep, user: User = Depends(require_operator)):
     # Урбанист заводит бизнес «в поле» при постановке объекта; админ — в реестре.
-    return repo.create_owner(body)
+    # Логин владельца обязателен и авто-создаётся (temp-пароль в credentials).
+    owner, creds = repo.create_owner(body)
+    return CreateOwnerResponse(owner=owner, credentials=creds)
 
 
 @router.patch("/owners/{wid}", response_model=Owner, summary="Правка собственника")

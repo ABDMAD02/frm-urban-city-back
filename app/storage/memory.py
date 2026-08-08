@@ -441,10 +441,14 @@ class MemoryStore:
     def find_owner(self, wid: str) -> Owner | None:
         return next((o for o in store.OWNERS if o.id == wid), None)
 
-    def create_owner(self, body: CreateOwnerRequest) -> Owner:
+    def create_owner(self, body: CreateOwnerRequest) -> tuple[Owner, Credentials | None]:
         from fastapi import HTTPException
         from app.enums import Role
+        from app.passwords import hash_password
+        from app.user_helpers import login_for
 
+        creds: Credentials | None = None
+        data = body.model_dump()
         if body.ownerUserId:
             user = self.find_user_by_id(body.ownerUserId)
             if user is None or user.role != Role.owner:
@@ -455,9 +459,23 @@ class MemoryStore:
                         "code": "invalid_owner_user",
                     },
                 )
-        owner = Owner(id=store.next_id("w"), **body.model_dump())
+        else:
+            # Логин владельца обязателен — авто-создаём аккаунт role=owner (temp-пароль).
+            ucode = store.next_id("u")
+            login = login_for(body.name)
+            plain = random_temp_password()
+            account = User(
+                id=ucode, name=body.name.strip(), role=Role.owner, position="Владелец бизнеса",
+                login=login, email=body.email, status=AccountStatus.active,
+                createdAt=config.today_str(), regionId=self._region_id,
+            )
+            store.USERS.append(account)
+            self._password_hashes[ucode] = hash_password(plain)
+            data["ownerUserId"] = ucode
+            creds = Credentials(login=login, tempPassword=plain)
+        owner = Owner(id=store.next_id("w"), **data)
         store.OWNERS.append(owner)
-        return owner
+        return owner, creds
 
     def update_owner(self, wid: str, body: CreateOwnerRequest) -> Owner | None:
         from fastapi import HTTPException
