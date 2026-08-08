@@ -213,10 +213,10 @@ class Street(Base):
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     district_id: Mapped[Optional[str]] = mapped_column(
-        Text, ForeignKey("district.id", ondelete="SET NULL")
+        Text, ForeignKey("district.id", ondelete="SET NULL"), index=True
     )
     microdistrict_id: Mapped[Optional[str]] = mapped_column(
-        Text, ForeignKey("microdistrict.id", ondelete="SET NULL")
+        Text, ForeignKey("microdistrict.id", ondelete="SET NULL"), index=True
     )
 
 
@@ -259,7 +259,7 @@ class AppUser(Base):
     )
     # Legacy 1:1 link; preferred link is Owner.owner_user_id (1 account → many businesses).
     owner_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        Uuid, ForeignKey("owner.id", ondelete="SET NULL")
+        Uuid, ForeignKey("owner.id", ondelete="SET NULL"), index=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -315,7 +315,7 @@ class CityObject(Base):
     )
     street: Mapped[Optional[str]] = mapped_column(Text)
     street_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        Uuid, ForeignKey("street.id", ondelete="SET NULL")
+        Uuid, ForeignKey("street.id", ondelete="SET NULL"), index=True
     )
     house: Mapped[Optional[str]] = mapped_column(Text)
     apartment: Mapped[Optional[str]] = mapped_column(Text)
@@ -350,7 +350,7 @@ class Inspection(Base):
         Uuid, ForeignKey("city_object.id", ondelete="CASCADE"), nullable=False
     )
     inspector_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        Uuid, ForeignKey("app_user.id", ondelete="SET NULL")
+        Uuid, ForeignKey("app_user.id", ondelete="SET NULL"), index=True
     )
     inspector: Mapped[str] = mapped_column(Text, nullable=False)  # имя-снимок
     date: Mapped[date] = mapped_column(Date, nullable=False)
