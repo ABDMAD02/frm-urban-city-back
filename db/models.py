@@ -278,6 +278,9 @@ class AppUser(Base):
     microdistricts: Mapped[list[UserMicrodistrict]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    streets: Mapped[list[UserStreet]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
     __mapper_args__ = {"version_id_col": version}
 
@@ -294,6 +297,20 @@ class UserMicrodistrict(Base):
     )
 
     user: Mapped[AppUser] = relationship(back_populates="microdistricts")
+
+
+# ── Закрепление сотрудников за улицами (N:M) — зоны по улицам ──────
+class UserStreet(Base):
+    __tablename__ = "user_street"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("app_user.id", ondelete="CASCADE"), primary_key=True
+    )
+    street_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("street.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+
+    user: Mapped[AppUser] = relationship(back_populates="streets")
 
 
 # ── Объекты города (корневой агрегат) ─────────────────────────────
@@ -325,6 +342,11 @@ class CityObject(Base):
     street_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("street.id", ondelete="SET NULL"), index=True
     )
+    # Явное переопределение ответственного (override). NULL = «по зоне».
+    # SET NULL: при удалении урбаниста объект возвращается в зону, не теряется (BR-3).
+    assigned_urbanist_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("app_user.id", ondelete="SET NULL"), index=True
+    )
     house: Mapped[Optional[str]] = mapped_column(Text)
     apartment: Mapped[Optional[str]] = mapped_column(Text)
     owner_id: Mapped[Optional[uuid.UUID]] = mapped_column(
@@ -344,6 +366,7 @@ class CityObject(Base):
 
     owner: Mapped[Optional["Owner"]] = relationship(foreign_keys=[owner_id])
     street_row: Mapped[Optional["Street"]] = relationship(foreign_keys=[street_id])
+    assigned_urbanist: Mapped[Optional["AppUser"]] = relationship(foreign_keys=[assigned_urbanist_id])
 
     __mapper_args__ = {"version_id_col": version}
 

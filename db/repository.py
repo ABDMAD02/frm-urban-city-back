@@ -169,12 +169,15 @@ class DbStore:
             row.owner = self._session.get(m.Owner, row.owner_id)
         if row.street_id and row.__dict__.get("street_row") is None:
             row.street_row = self._session.get(m.Street, row.street_id)
+        if row.assigned_urbanist_id and row.__dict__.get("assigned_urbanist") is None:
+            row.assigned_urbanist = self._session.get(m.AppUser, row.assigned_urbanist_id)
         return mappers.city_object(row)
 
     def list_objects(self) -> list[CityObject]:
         q = select(m.CityObject).options(
             selectinload(m.CityObject.owner),
             selectinload(m.CityObject.street_row),
+            selectinload(m.CityObject.assigned_urbanist),
         )
         if self._region_id:
             q = q.where(m.CityObject.region_id == self._region_id)
@@ -191,6 +194,7 @@ class DbStore:
             options=(
                 selectinload(m.CityObject.owner),
                 selectinload(m.CityObject.street_row),
+                selectinload(m.CityObject.assigned_urbanist),
             ),
         )
         if row is None:
@@ -350,6 +354,12 @@ class DbStore:
                 house=row.house,
                 apartment=row.apartment,
             )
+        # assignedUrbanistId: явный null = снять override (exclude_none его глотает).
+        if "assignedUrbanistId" in patch.model_fields_set:
+            aid = patch.assignedUrbanistId
+            row.assigned_urbanist_id = self._resolve_uuid(m.AppUser, aid) if aid else None
+            if "assigned_urbanist" in row.__dict__:
+                del row.__dict__["assigned_urbanist"]
         row.updated_at = _parse_date(config.today_str())
         htype = HistoryType.status_changed if "status" in data else HistoryType.card_updated
         self.append_history(HistoryEvent(
@@ -631,7 +641,7 @@ class DbStore:
 
     # ── users / auth ──────────────────────────────────────────────
     def list_users(self) -> list[User]:
-        q = select(m.AppUser).options(selectinload(m.AppUser.microdistricts)).where(
+        q = select(m.AppUser).options(selectinload(m.AppUser.microdistricts), selectinload(m.AppUser.streets)).where(
             m.AppUser.role != Role.platform_superadmin
         )
         if self._region_id:
@@ -693,6 +703,14 @@ class DbStore:
 
     def _map_user(self, row: m.AppUser) -> User:
         md_ids = [um.microdistrict_id for um in row.microdistricts] if row.microdistricts else None
+        st_ids = None
+        if row.streets:
+            st_uids = [us.street_id for us in row.streets]
+            st_ids = list(
+                self._session.scalars(
+                    select(m.Street.code).where(m.Street.id.in_(st_uids), m.Street.code.is_not(None))
+                ).all()
+            ) or None
         owner_objs = None
         if row.role.value == "owner":
             business_ids = list(
@@ -711,7 +729,7 @@ class DbStore:
                     )
                 ).all()
                 owner_objs = list(objs)
-        return mappers.user(row, microdistrict_ids=md_ids, owner_object_ids=owner_objs)
+        return mappers.user(row, microdistrict_ids=md_ids, street_ids=st_ids, owner_object_ids=owner_objs)
 
     def _user_public_id(self, uid: uuid.UUID | None) -> str | None:
         if uid is None:
@@ -823,6 +841,13 @@ class DbStore:
                 self._session.delete(um)
             for md_id in body.microdistrictIds:
                 self._session.add(m.UserMicrodistrict(user_id=row.id, microdistrict_id=md_id))
+        if body.streetIds is not None:
+            for us in list(row.streets):
+                self._session.delete(us)
+            for st_code in body.streetIds:
+                st_uid = self._resolve_uuid(m.Street, st_code)
+                if st_uid is not None:
+                    self._session.add(m.UserStreet(user_id=row.id, street_id=st_uid))
         if body.resetPassword:
             from app.passwords import hash_password
 

@@ -201,6 +201,11 @@ class MemoryStore:
         data = patch.model_dump(exclude_none=True)
         for k, v in data.items():
             setattr(obj, k, v)
+        # assignedUrbanistId: явный null = снять override (exclude_none его глотает).
+        if "assignedUrbanistId" in patch.model_fields_set:
+            obj.assignedUrbanistId = patch.assignedUrbanistId
+            responsible = self.find_user_by_id(obj.assignedUrbanistId) if obj.assignedUrbanistId else None
+            obj.assignedUrbanistName = responsible.name if responsible else None
         obj.updatedAt = config.today_str()
         htype = HistoryType.status_changed if "status" in data else HistoryType.card_updated
         self.append_history(HistoryEvent(
@@ -403,6 +408,8 @@ class MemoryStore:
             user.status = body.status
         if body.microdistrictIds is not None:
             user.microdistrictIds = body.microdistrictIds
+        if body.streetIds is not None:
+            user.streetIds = body.streetIds
         if body.resetPassword:
             user.status = "active"
             plain = random_temp_password()

@@ -114,15 +114,32 @@ def owner_business_ids(repo: StoreDep, user: User) -> set[str]:
 
 
 def accessible_object_ids(repo: StoreDep, user: User) -> set[str]:
-    """Object ids visible to current role."""
+    """Object ids visible to current role.
+
+    Правило скоупа урбаниста (ТЗ «Назначение на зоны», §3.1):
+      1. O.assignedUrbanistId == U.id                       — явное переопределение (высший приоритет); ИЛИ
+      2. O.assignedUrbanistId is None И (мкр O ∈ зоны-мкр U ИЛИ улица O ∈ зоны-улицы U).
+    Следствия: чужой override скрывает объект из зоны; урбанист без зон и без явных
+    объектов видит ПУСТОЙ скоуп (а не весь регион).
+    """
     all_objects = repo.list_objects()
     if user.role == Role.owner:
         business_ids = owner_business_ids(repo, user)
         return {o.id for o in all_objects if o.ownerId in business_ids}
-    if user.role == Role.urbanist and user.microdistrictIds:
-        mds = set(user.microdistrictIds)
-        return {o.id for o in all_objects if o.microdistrictId in mds}
-    return {o.id for o in all_objects}
+    if user.role == Role.urbanist:
+        md = set(user.microdistrictIds or [])
+        st = set(user.streetIds or [])
+        result: set[str] = set()
+        for o in all_objects:
+            if o.assignedUrbanistId == user.id:
+                result.add(o.id)
+            elif o.assignedUrbanistId is None and (
+                (o.microdistrictId is not None and o.microdistrictId in md)
+                or (o.streetId is not None and o.streetId in st)
+            ):
+                result.add(o.id)
+        return result
+    return {o.id for o in all_objects}   # region_admin / platform_superadmin
 
 
 def owner_object_ids(repo: StoreDep, user: User) -> set[str]:

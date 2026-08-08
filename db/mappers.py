@@ -57,13 +57,14 @@ def owner(row: orm.Owner, *, owner_user_id: str | None = None) -> dto.Owner:
     )
 
 
-def user(row: orm.AppUser, *, microdistrict_ids: list[str] | None = None, owner_object_ids: list[str] | None = None) -> dto.User:
+def user(row: orm.AppUser, *, microdistrict_ids: list[str] | None = None, street_ids: list[str] | None = None, owner_object_ids: list[str] | None = None) -> dto.User:
     return dto.User(
         id=_code(row),
         name=row.name,
         role=Role(row.role.value),
         position=row.position,
         microdistrictIds=microdistrict_ids,
+        streetIds=street_ids,
         ownerObjectIds=owner_object_ids,
         login=row.login,
         status=AccountStatus(row.status.value),
@@ -84,6 +85,14 @@ def city_object(
         owner_id = _owner_public_id(row)
     if street_id is None and getattr(row, "street_id", None):
         street_id = _street_public_id(row)
+    assigned = row.__dict__.get("assigned_urbanist")
+    assigned_id = None
+    assigned_name = None
+    if assigned is not None:
+        assigned_id = assigned.code or str(assigned.id)
+        assigned_name = assigned.name
+    elif getattr(row, "assigned_urbanist_id", None):
+        assigned_id = str(row.assigned_urbanist_id)
     return dto.CityObject(
         id=_code(row),
         name=row.name,
@@ -101,6 +110,8 @@ def city_object(
         ownerId=owner_id,
         status=ObjectStatus(row.status.value),
         responsible=row.responsible or "",
+        assignedUrbanistId=assigned_id,
+        assignedUrbanistName=assigned_name,
         createdAt=_d(row.created_at),
         updatedAt=_d(row.updated_at),
     )

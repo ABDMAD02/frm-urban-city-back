@@ -7,10 +7,13 @@ from ..deps import StoreDep
 from ..security import accessible_object_ids, ensure_owner_business_access, ensure_object_access, get_current_user, require_operator, require_region_admin
 from ..fsm import can_transition
 from ..models import (
+    BulkAssignObjectsRequest,
+    BulkAssignObjectsResult,
     BulkDeleteObjectsRequest,
     BulkDeleteObjectsResult,
     CityObject,
     CreateObjectRequest,
+    ObjectPatch,
     UpdateObjectRequest,
     User,
     GeocodeResult,
@@ -19,6 +22,27 @@ from ..models import (
 from ..enums import Role, ObjectStatus
 
 router = APIRouter(tags=["Объекты"])
+
+
+def _validate_assignee(repo: StoreDep, actor: User, assigned_id: str | None) -> None:
+    """Проверка назначаемого урбаниста (BR-5/6). assigned_id=None (снять override) — ок.
+
+    Назначать вправе только region_admin; цель — урбанист того же региона.
+    """
+    if actor.role != Role.region_admin:
+        raise HTTPException(
+            403,
+            detail={"message": "Назначать ответственного вправе только администратор района", "code": "forbidden"},
+        )
+    if assigned_id is None:
+        return
+    target = repo.find_user_by_id(assigned_id)
+    if target is None:
+        raise HTTPException(404, detail={"message": "Урбанист не найден", "code": "not_found"})
+    if target.role != Role.urbanist:
+        raise HTTPException(409, detail={"message": "Назначить можно только урбаниста", "code": "invalid_role"})
+    if actor.regionId and target.regionId and target.regionId != actor.regionId:
+        raise HTTPException(422, detail={"message": "Урбанист другого города", "code": "forbidden"})
 
 
 def _scope(repo: StoreDep, objects: list[CityObject], user: User) -> list[CityObject]:
@@ -94,6 +118,56 @@ def bulk_delete_objects(
     return BulkDeleteObjectsResult(deleted=deleted)
 
 
+@router.post(
+    "/objects/bulk-assign",
+    response_model=BulkAssignObjectsResult,
+    summary="Массово назначить ответственного (только администратор района)",
+)
+def bulk_assign_objects(
+    body: BulkAssignObjectsRequest,
+    repo: StoreDep,
+    user: User = Depends(require_region_admin),
+):
+    """Идемпотентно: дубли/несуществующие/архивные id пропускаются."""
+    _validate_assignee(repo, user, body.assignedUrbanistId)
+    seen: set[str] = set()
+    assigned = 0
+    for oid in body.ids:
+        if not oid or oid in seen:
+            continue
+        seen.add(oid)
+        obj = repo.find_object(oid)
+        if obj is None or obj.status == ObjectStatus.archived:
+            continue
+        patch = ObjectPatch(assignedUrbanistId=body.assignedUrbanistId)
+        if repo.update_object(oid, patch, "Массовое назначение ответственного", user.name) is not None:
+            assigned += 1
+    return BulkAssignObjectsResult(assigned=assigned)
+
+
+@router.get(
+    "/objects/unassigned",
+    response_model=list[CityObject],
+    summary="Нераспределённые объекты (только администратор района)",
+)
+def list_unassigned_objects(repo: StoreDep, user: User = Depends(require_region_admin)):
+    """BR-3: assignedUrbanistId IS NULL И мкр/улица вне всех зон урбанистов региона."""
+    zone_md: set[str] = set()
+    zone_st: set[str] = set()
+    for u in repo.list_users():
+        if u.role == Role.urbanist:
+            zone_md.update(u.microdistrictIds or [])
+            zone_st.update(u.streetIds or [])
+    out = []
+    for o in _active(repo.list_objects()):
+        if o.assignedUrbanistId is not None:
+            continue
+        in_zone = (o.microdistrictId in zone_md) or (o.streetId in zone_st)
+        if not in_zone:
+            out.append(o)
+    return out
+
+
 @router.get("/objects/{oid}", response_model=CityObject, summary="Один объект")
 def get_object(oid: str, repo: StoreDep, user: User = Depends(get_current_user)):
     obj = repo.find_object(oid)
@@ -110,6 +184,9 @@ def update_object(oid: str, body: UpdateObjectRequest, repo: StoreDep, user: Use
         raise HTTPException(404, detail={"message": "Объект не найден", "code": "not_found"})
     ensure_object_access(repo, user, obj.id)
     patch = body.patch
+    # Переопределение ответственного (override) вправе ставить только админ; цель — урбанист региона.
+    if "assignedUrbanistId" in patch.model_fields_set:
+        _validate_assignee(repo, user, patch.assignedUrbanistId)
     if patch.status is not None and not can_transition(obj.status, patch.status):
         raise HTTPException(
             409,
