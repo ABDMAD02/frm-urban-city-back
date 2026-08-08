@@ -9,8 +9,6 @@ from app.enums import (
     MapProvider,
     PlatformAuditAction,
     RegionStatus,
-    SubscriptionPlan,
-    SubscriptionStatus,
 )
 from app.models import Credentials
 
@@ -32,18 +30,6 @@ class Region(BaseModel):
     addressSchema: str = "microdistrict,street,house"
 
 
-class Subscription(BaseModel):
-    regionId: str
-    plan: SubscriptionPlan
-    status: SubscriptionStatus
-    maxUsers: int
-    maxObjects: int
-    usersUsed: int
-    objectsUsed: int
-    validFrom: str
-    validUntil: str
-
-
 class AdminUser(BaseModel):
     id: str
     name: str
@@ -61,14 +47,6 @@ class RegionAdminAccount(BaseModel):
     createdAt: str
 
 
-class Plan(BaseModel):
-    id: SubscriptionPlan
-    label: str
-    maxUsers: int
-    maxObjects: int
-    priceHint: str
-
-
 class AuditEvent(BaseModel):
     id: str
     regionId: str
@@ -84,7 +62,6 @@ class ProvisionRegionRequest(BaseModel):
     timezone: str = "Asia/Oral"
     locale: Locale = Locale.ru
     mapProvider: MapProvider = MapProvider.twogis
-    plan: SubscriptionPlan = SubscriptionPlan.trial
     adminName: str = Field(min_length=1)
     cityType: str | None = "city"
     oblast: str | None = None
@@ -98,18 +75,12 @@ class RegionStatusPatch(BaseModel):
     status: RegionStatus
 
 
-class SubscriptionPatch(BaseModel):
-    plan: SubscriptionPlan
-    validUntil: str
-
-
 class ReissueAdminRequest(BaseModel):
     name: str = Field(min_length=1)
 
 
 class ProvisionRegionResponse(BaseModel):
     region: Region
-    subscription: Subscription
     adminAccount: RegionAdminAccount
     credentials: Credentials
 

@@ -13,7 +13,6 @@ from app.deps import use_database
 from app.platform_models import (
     AdminUser,
     AuditEvent,
-    Plan,
     ProvisionRegionRequest,
     ProvisionRegionResponse,
     Region,
@@ -21,8 +20,6 @@ from app.platform_models import (
     RegionStatusPatch,
     ReissueAdminRequest,
     ReissueAdminResponse,
-    Subscription,
-    SubscriptionPatch,
 )
 from db.base import SessionLocal, get_engine
 from db.platform_repository import PlatformStore
@@ -83,11 +80,6 @@ def list_regions(store: PlatformStoreDep, _: AdminUser = Depends(require_platfor
     return store.list_regions()
 
 
-@router.get("/platform/subscriptions", response_model=list[Subscription])
-def list_subscriptions(store: PlatformStoreDep, _: AdminUser = Depends(require_platform_superadmin)):
-    return store.list_subscriptions()
-
-
 @router.get("/platform/admin-users", response_model=list[AdminUser])
 def list_admin_users(store: PlatformStoreDep, _: AdminUser = Depends(require_platform_superadmin)):
     return store.list_admin_users()
@@ -96,11 +88,6 @@ def list_admin_users(store: PlatformStoreDep, _: AdminUser = Depends(require_pla
 @router.get("/platform/region-admin-accounts", response_model=list[RegionAdminAccount])
 def list_region_admins(store: PlatformStoreDep, _: AdminUser = Depends(require_platform_superadmin)):
     return store.list_region_admin_accounts()
-
-
-@router.get("/platform/plans", response_model=list[Plan])
-def list_plans(store: PlatformStoreDep, _: AdminUser = Depends(require_platform_superadmin)):
-    return store.list_plans()
 
 
 @router.get("/platform/audit", response_model=list[AuditEvent])
@@ -121,7 +108,7 @@ def provision_region(
     actor: AdminUser = Depends(require_platform_superadmin),
 ):
     try:
-        region, sub, account, creds = store.provision_region(body, actor=actor.email or actor.name)
+        region, account, creds = store.provision_region(body, actor=actor.email or actor.name)
     except LookupError as exc:
         if str(exc) == "region_exists":
             _raise(409, "Регион уже существует", "region_exists")
@@ -129,7 +116,7 @@ def provision_region(
     except ValueError as exc:
         _raise(400, str(exc), "invalid_request")
     return ProvisionRegionResponse(
-        region=region, subscription=sub, adminAccount=account, credentials=creds
+        region=region, adminAccount=account, credentials=creds
     )
 
 
@@ -146,22 +133,6 @@ def patch_region_status(
         _raise(404, "Регион не найден", "region_not_found")
     except ValueError:
         _raise(409, "Недопустимый переход статуса", "invalid_status_transition")
-
-
-@router.patch("/platform/regions/{regionId}/subscription", response_model=Subscription)
-def patch_subscription(
-    regionId: str,
-    body: SubscriptionPatch,
-    store: PlatformStoreDep,
-    actor: AdminUser = Depends(require_platform_superadmin),
-):
-    try:
-        return store.patch_subscription(regionId, body, actor=actor.email or actor.name)
-    except LookupError as exc:
-        code = str(exc)
-        _raise(404, code, code)
-    except ValueError:
-        _raise(400, "Некорректная дата validUntil", "invalid_date")
 
 
 @router.post("/platform/regions/{regionId}/admin-account", response_model=ReissueAdminResponse, status_code=201)

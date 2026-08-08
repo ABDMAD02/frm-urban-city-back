@@ -23,16 +23,6 @@ class RegionStatus(str, Enum):
     archived = "archived"
 
 
-class SubscriptionPlan(str, Enum):
-    trial = "trial"
-    standard = "standard"
-    pro = "pro"
-
-
-class SubscriptionStatus(str, Enum):
-    active = "active"
-    grace = "grace"
-    expired = "expired"
 
 
 class Locale(str, Enum):
@@ -128,8 +118,6 @@ ENUM_TYPE_NAMES: dict[type[Enum], str] = {
     PhotoKind: "photo_kind_enum",
     HistoryType: "history_type_enum",
     RegionStatus: "region_status_enum",
-    SubscriptionPlan: "subscription_plan_enum",
-    SubscriptionStatus: "subscription_status_enum",
     Locale: "locale_enum",
     MapProvider: "map_provider_enum",
     PlatformAuditAction: "platform_audit_action_enum",

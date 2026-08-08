@@ -47,8 +47,6 @@ from .enums import (
     PrescriptionStatus,
     RegionStatus,
     Role,
-    SubscriptionPlan,
-    SubscriptionStatus,
     enum_values,
 )
 
@@ -120,32 +118,6 @@ class Region(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-
-
-class Plan(Base):
-    __tablename__ = "plan"
-
-    id: Mapped[SubscriptionPlan] = mapped_column(pg_enum(SubscriptionPlan), primary_key=True)
-    label: Mapped[str] = mapped_column(Text, nullable=False)
-    max_users: Mapped[int] = mapped_column(Integer, nullable=False)
-    max_objects: Mapped[int] = mapped_column(Integer, nullable=False)
-    price_hint: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
-
-
-class Subscription(Base):
-    __tablename__ = "subscription"
-
-    region_id: Mapped[str] = mapped_column(
-        Text, ForeignKey("region.id", ondelete="CASCADE"), primary_key=True
-    )
-    plan: Mapped[SubscriptionPlan] = mapped_column(pg_enum(SubscriptionPlan), nullable=False)
-    status: Mapped[SubscriptionStatus] = mapped_column(
-        pg_enum(SubscriptionStatus), nullable=False, server_default="active"
-    )
-    max_users: Mapped[int] = mapped_column(Integer, nullable=False)
-    max_objects: Mapped[int] = mapped_column(Integer, nullable=False)
-    valid_from: Mapped[date] = mapped_column(Date, nullable=False)
-    valid_until: Mapped[date] = mapped_column(Date, nullable=False)
 
 
 class PlatformAudit(Base):
