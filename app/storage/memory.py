@@ -310,6 +310,13 @@ class MemoryStore:
             setattr(pr, k, v)
         return self._overdue(pr)
 
+    def mark_prescription_sent(self, pid: str, to: str | None) -> str | None:
+        # Демо: колонок sent_at/sent_to нет в in-memory DTO — возвращаем момент
+        # выдачи для ответа, без персистенции (паритет поведения с DbStore).
+        if self._find_stored_prescription(pid) is None:
+            return None
+        return config.now_iso()
+
     def list_users(self) -> list[User]:
         from app.enums import Role
         return [u for u in store.USERS if u.role != Role.platform_superadmin]

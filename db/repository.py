@@ -606,6 +606,25 @@ class DbStore:
         self._session.flush()
         return self.find_prescription(pid)
 
+    def mark_prescription_sent(self, pid: str, to: str | None) -> str | None:
+        """Зафиксировать выдачу уведомления ответственному лицу (sent_at/sent_to).
+
+        Реальной доставки (email/Telegram) пока нет — уведомление бумажное,
+        выдаётся лично. Здесь фиксируется момент и адресат выдачи как аудит-след,
+        а не факт электронной отправки.
+        """
+        from datetime import datetime, timezone
+
+        uid = self._resolve_uuid(m.Prescription, pid)
+        row = self._session.get(m.Prescription, uid) if uid else None
+        if row is None:
+            return None
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        row.sent_at = now
+        row.sent_to = to
+        self._session.flush()
+        return now.isoformat().replace("+00:00", "Z")
+
     # ── users / auth ──────────────────────────────────────────────
     def list_users(self) -> list[User]:
         q = select(m.AppUser).options(selectinload(m.AppUser.microdistricts)).where(
