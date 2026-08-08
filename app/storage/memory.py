@@ -320,10 +320,6 @@ class MemoryStore:
     def find_user_by_login(self, login: str) -> User | None:
         return next((u for u in store.USERS if (u.login or "").lower() == login.lower()), None)
 
-    def find_region_admin(self) -> User | None:
-        from app.enums import Role
-        return next((u for u in store.USERS if u.role == Role.region_admin), None)
-
     def authenticate_lookup(self, email_or_login: str) -> tuple[User | None, str | None]:
         key = email_or_login.strip().lower()
         login = key.split("@")[0]

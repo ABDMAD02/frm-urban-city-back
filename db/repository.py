@@ -58,11 +58,6 @@ class DbStore:
     def set_region(self, region_id: str | None) -> None:
         self._region_id = region_id
 
-    def _region_filter(self, column):
-        if self._region_id:
-            return column == self._region_id
-        return True
-
     def _ensure_same_region(self, row_region_id: str | None) -> None:
         """403 if row belongs to another city (tenant isolation)."""
         from fastapi import HTTPException
@@ -672,14 +667,6 @@ class DbStore:
         row.password_hash = hash_password(password)
         self._session.flush()
         return True
-
-    def find_region_admin(self) -> User | None:
-        row = self._session.scalar(
-            select(m.AppUser)
-            .where(m.AppUser.role == Role.region_admin)
-            .options(selectinload(m.AppUser.microdistricts))
-        )
-        return self._map_user(row) if row else None
 
     def _map_user(self, row: m.AppUser) -> User:
         md_ids = [um.microdistrict_id for um in row.microdistricts] if row.microdistricts else None
