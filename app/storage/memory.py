@@ -528,7 +528,20 @@ class MemoryStore:
         return store.VERSIONS
 
     def inspection_trend(self) -> list[TrendPoint]:
-        return store.INSPECTION_TREND
+        from datetime import date as _date
+
+        from app.domain_rules import inspection_trend_counts
+
+        dates = []
+        for i in store.INSPECTIONS:
+            try:
+                dates.append(_date.fromisoformat(i.date[:10]))
+            except (ValueError, TypeError):
+                continue
+        return [
+            TrendPoint(month=label, value=value)
+            for label, value in inspection_trend_counts(dates, config.today_date())
+        ]
 
     def list_checklist_template(self, *, visible_only: bool = True) -> list[ChecklistTemplateItem]:
         region_id = self._region_id or "uralsk"

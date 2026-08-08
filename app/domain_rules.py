@@ -5,7 +5,32 @@
 """
 from __future__ import annotations
 
+from datetime import date
+
 from .enums import PrescriptionStatus
+
+_RU_MONTHS_SHORT = (
+    "Янв", "Фев", "Мар", "Апр", "Май", "Июн",
+    "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек",
+)
+
+
+def inspection_trend_counts(
+    dates: list[date], today: date, months: int = 6
+) -> list[tuple[str, int]]:
+    """Число проверок по месяцам за последние `months` месяцев, кончая текущим.
+
+    Заменяет статический сид-массив: тренд считается из реальных дат проверок.
+    Возвращает пары (короткая метка месяца, количество) в хронологическом порядке.
+    """
+    end_idx = today.year * 12 + (today.month - 1)
+    buckets = [end_idx - k for k in range(months - 1, -1, -1)]
+    counts = {b: 0 for b in buckets}
+    for d in dates:
+        idx = d.year * 12 + (d.month - 1)
+        if idx in counts:
+            counts[idx] += 1
+    return [(_RU_MONTHS_SHORT[b % 12], counts[b]) for b in buckets]
 
 
 def effective_prescription_status(

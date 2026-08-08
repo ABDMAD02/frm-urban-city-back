@@ -1021,9 +1021,19 @@ class DbStore:
         return [mappers.object_version(r, object_code=self._object_code(r.object_id)) for r in rows]
 
     def inspection_trend(self) -> list[TrendPoint]:
-        from app import store as seed
+        from app import config
+        from app.domain_rules import inspection_trend_counts
 
-        return seed.INSPECTION_TREND
+        q = select(m.Inspection.date)
+        if self._region_id:
+            q = q.join(m.CityObject, m.Inspection.object_id == m.CityObject.id).where(
+                m.CityObject.region_id == self._region_id
+            )
+        dates = list(self._session.scalars(q).all())
+        return [
+            TrendPoint(month=label, value=value)
+            for label, value in inspection_trend_counts(dates, config.today_date())
+        ]
 
     # ── checklist template / streets / geo ─────────────────────────
     def list_checklist_template(self, *, visible_only: bool = True) -> list[dto.ChecklistTemplateItem]:
