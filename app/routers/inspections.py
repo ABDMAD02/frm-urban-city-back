@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from .. import config
 from ..deps import StoreDep
-from ..security import accessible_object_ids, ensure_object_access, get_current_user
+from ..security import accessible_object_ids, ensure_object_access, get_current_user, require_operator
 from ..fsm import can_transition
 from ..models import (
     Inspection, CreateInspectionRequest, InspectionResultView, ReinspectionRequest,
@@ -72,7 +72,7 @@ def list_inspections(repo: StoreDep, user: User = Depends(get_current_user)):
 
 @router.post("/objects/{oid}/inspections", response_model=InspectionResultView, status_code=201,
              summary="Провести первичную проверку")
-def add_inspection(oid: str, body: CreateInspectionRequest, repo: StoreDep, user: User = Depends(get_current_user)):
+def add_inspection(oid: str, body: CreateInspectionRequest, repo: StoreDep, user: User = Depends(require_operator)):
     obj = repo.find_object(oid)
     if obj is None:
         raise HTTPException(404, detail={"message": "Объект не найден", "code": "not_found"})
@@ -140,7 +140,7 @@ _REINSPECT = {
 
 
 @router.post("/objects/{oid}/reinspections", response_model=CityObject, summary="Повторная проверка")
-def reinspect(oid: str, body: ReinspectionRequest, repo: StoreDep, user: User = Depends(get_current_user)):
+def reinspect(oid: str, body: ReinspectionRequest, repo: StoreDep, user: User = Depends(require_operator)):
     obj = repo.find_object(oid)
     if obj is None:
         raise HTTPException(404, detail={"message": "Объект не найден", "code": "not_found"})

@@ -10,6 +10,7 @@ from ..security import (
     ensure_owner_business_access,
     ensure_object_access,
     get_current_user,
+    require_operator,
 )
 from ..models import (
     Prescription, PrescriptionPatch, SendPrescriptionRequest, SendResult, HistoryEvent, User,
@@ -48,7 +49,7 @@ def get_prescription(pid: str, repo: StoreDep, user: User = Depends(get_current_
 
 
 @router.patch("/prescriptions/{pid}", response_model=Prescription, summary="Изменить предписание")
-def patch_prescription(pid: str, body: PrescriptionPatch, repo: StoreDep, user: User = Depends(get_current_user)):
+def patch_prescription(pid: str, body: PrescriptionPatch, repo: StoreDep, user: User = Depends(require_operator)):
     current = repo.find_prescription(pid)
     if current is None:
         raise HTTPException(404, "Предписание не найдено")
