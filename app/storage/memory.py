@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from app import config, store
 from app.address import DEFAULT_ADDRESS_SCHEMA, DEFAULT_CHECKLIST_ITEMS, build_address
+from app.domain_rules import effective_prescription_status
 from app.enums import HistoryType, ObjectStatus
 from app.models import (
     ChecklistTemplateItem,
@@ -286,19 +287,28 @@ class MemoryStore:
         store.PRESCRIPTIONS.append(pr)
         return pr
 
-    def list_prescriptions(self) -> list[Prescription]:
-        return store.PRESCRIPTIONS
+    def _overdue(self, p: Prescription) -> Prescription:
+        # На чтении: open + прошедший дедлайн → overdue (не мутируя хранимый объект).
+        eff = effective_prescription_status(p.status, p.deadline, config.today_str())
+        return p if eff == p.status else p.model_copy(update={"status": eff})
 
-    def find_prescription(self, pid: str) -> Prescription | None:
+    def _find_stored_prescription(self, pid: str) -> Prescription | None:
         return next((p for p in store.PRESCRIPTIONS if p.id == pid), None)
 
+    def list_prescriptions(self) -> list[Prescription]:
+        return [self._overdue(p) for p in store.PRESCRIPTIONS]
+
+    def find_prescription(self, pid: str) -> Prescription | None:
+        p = self._find_stored_prescription(pid)
+        return self._overdue(p) if p is not None else None
+
     def patch_prescription(self, pid: str, data: dict) -> Prescription | None:
-        pr = self.find_prescription(pid)
+        pr = self._find_stored_prescription(pid)
         if pr is None:
             return None
         for k, v in data.items():
             setattr(pr, k, v)
-        return pr
+        return self._overdue(pr)
 
     def list_users(self) -> list[User]:
         from app.enums import Role

@@ -4,7 +4,8 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from app import models as dto
+from app import config, models as dto
+from app.domain_rules import effective_prescription_status
 from app.enums import (
     AccountStatus,
     ChecklistValue,
@@ -211,7 +212,9 @@ def prescription(row: orm.Prescription, *, object_code: str, inspection_code: st
         issuedAt=_d(row.issued_at),
         deadline=_d(row.deadline),
         reinspectionDate=_d(row.reinspection_date),
-        status=PrescriptionStatus(row.status.value),
+        status=effective_prescription_status(
+            PrescriptionStatus(row.status.value), _d(row.deadline), config.today_str()
+        ),
     )
 
 
