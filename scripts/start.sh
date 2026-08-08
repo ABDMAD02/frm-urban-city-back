@@ -5,6 +5,10 @@ PORT="${PORT:-8080}"
 WORKERS="${WEB_CONCURRENCY:-2}"
 
 reset_public_schema() {
+  if [ "${ENV:-development}" = "production" ] && [ "${ALLOW_DB_RESET:-0}" != "1" ]; then
+    echo "FATAL: RESET_DB=1 in production without ALLOW_DB_RESET=1 — refusing to drop data."
+    exit 1
+  fi
   echo "RESET_DB=1 — dropping public schema for a clean database..."
   python - <<'PY'
 from sqlalchemy import text
@@ -21,10 +25,13 @@ PY
 
 ensure_schema() {
   python - <<'PY'
+import os
 from sqlalchemy import inspect, text
 from db.base import get_engine
 
 HEAD_REVISION = "0005"
+_IS_PROD = os.getenv("ENV", "development") == "production"
+_ALLOW_RESET = os.getenv("ALLOW_DB_RESET", "0").lower() in ("1", "true", "yes")
 engine = get_engine()
 insp = inspect(engine)
 tables = set(insp.get_table_names())
@@ -54,6 +61,14 @@ print(
 )
 
 if missing_tables or missing_code or missing_region:
+    if _IS_PROD and not _ALLOW_RESET:
+        # В production не роняем данные молча. Разбор — вручную/в CI; при
+        # осознанном пересоздании выставить ALLOW_DB_RESET=1.
+        print(
+            "FATAL: schema incomplete in production — refusing to DROP SCHEMA. "
+            "Fix manually or set ALLOW_DB_RESET=1 to override."
+        )
+        raise SystemExit(4)
     print("Schema incomplete — resetting public schema and re-applying migrations")
     with engine.begin() as conn:
         conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
@@ -91,6 +106,10 @@ if [ "${RUN_MIGRATIONS:-0}" = "1" ]; then
       3)
         alembic stamp head
         ensure_schema
+        ;;
+      4)
+        echo "Refusing to auto-reset schema in production. Aborting start."
+        exit 1
         ;;
       *)
         echo "Schema check failed with unexpected code"
