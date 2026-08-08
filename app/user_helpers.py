@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 
 _TRANSLIT = {
     "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e", "ж": "zh",
@@ -33,8 +34,27 @@ def login_for(name: str) -> str:
 
 
 def temp_password(seed: str) -> str:
+    """Детерминированный демо-пароль по коду. ТОЛЬКО для сид-данных (демо-логины).
+
+    Предсказуем по коду (u2 → UC-0002-u2), поэтому для операционного создания и
+    сброса паролей использовать random_temp_password() — см. находку C2 аудита.
+    """
     tail = re.sub(r"\D", "", seed)[-4:].rjust(4, "0")
     return f"UC-{tail}-{seed[-2:].rjust(2, '0')}"
+
+
+# Алфавит без похожих символов (0/O, 1/I) — человекочитаемо при диктовке.
+_TEMP_PW_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def random_temp_password() -> str:
+    """Непредсказуемый временный пароль формата UC-XXXX-YYYY.
+
+    Для реального создания/сброса учётных записей: пароль нельзя вычислить из
+    логина или последовательного кода пользователя.
+    """
+    block = lambda: "".join(secrets.choice(_TEMP_PW_ALPHABET) for _ in range(4))
+    return f"UC-{block()}-{block()}"
 
 
 # Пароль супер-админа платформы. В production задаётся через переменную окружения

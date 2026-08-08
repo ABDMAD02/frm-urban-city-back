@@ -31,7 +31,7 @@ from app.platform_models import (
     SubscriptionPatch,
 )
 from app.store import TYPES
-from app.user_helpers import login_for, temp_password
+from app.user_helpers import login_for, random_temp_password, temp_password
 from app.passwords import hash_password
 from db.codes import uuid_for_code
 from db import models as m
@@ -237,7 +237,7 @@ class PlatformStore:
             login = f"{base}{n}"
 
         code = f"ra-{region_id}-{uuid.uuid4().hex[:6]}"
-        plain = temp_password(code)
+        plain = random_temp_password()
         row = m.AppUser(
             id=uuid_for_code(code),
             code=code,

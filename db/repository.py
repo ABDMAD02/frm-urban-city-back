@@ -46,7 +46,7 @@ def _now_dt() -> datetime:
     return datetime.now(timezone.utc)
 
 
-from app.user_helpers import login_for, temp_password
+from app.user_helpers import login_for, random_temp_password, temp_password
 
 
 class DbStore:
@@ -767,7 +767,7 @@ class DbStore:
         self._assert_user_limit(region_id)
         code = self.next_id("u")
         login = login_for(body.name)
-        plain = temp_password(code)
+        plain = random_temp_password()
 
         row = m.AppUser(
             id=uuid_for_code(code),
@@ -833,7 +833,7 @@ class DbStore:
             from app.passwords import hash_password
 
             row.status = AccountStatus.active
-            plain = temp_password(row.code or uid_str)
+            plain = random_temp_password()
             row.password_hash = hash_password(plain)
             creds = Credentials(login=row.login or "", tempPassword=plain)
         self._session.flush()

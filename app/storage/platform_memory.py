@@ -28,6 +28,7 @@ from app.user_helpers import (
     PLATFORM_SUPERADMIN_EMAIL,
     PLATFORM_SUPERADMIN_PASSWORD,
     login_for,
+    random_temp_password,
     temp_password,
 )
 from app.passwords import hash_password
@@ -205,7 +206,7 @@ class MemoryPlatformStore:
             status=AccountStatus.active,
             createdAt=today.isoformat(),
         )
-        creds = Credentials(login=login, tempPassword=temp_password(code_u))
+        creds = Credentials(login=login, tempPassword=random_temp_password())
         self.regions.append(region)
         self.subscriptions.append(sub)
         self.region_admins.append(account)
@@ -306,7 +307,7 @@ class MemoryPlatformStore:
             status=AccountStatus.active,
             createdAt=date.today().isoformat(),
         )
-        creds = Credentials(login=login, tempPassword=temp_password(code_u))
+        creds = Credentials(login=login, tempPassword=random_temp_password())
         self.region_admins.append(account)
         self._audit(region_id, actor, PlatformAuditAction.region_admin_reissued, login)
         return account, creds
