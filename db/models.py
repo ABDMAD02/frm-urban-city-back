@@ -20,11 +20,13 @@ from sqlalchemy import (
     Double,
     Enum as SAEnum,
     ForeignKey,
+    Index,
     Integer,
     Text,
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -168,6 +170,12 @@ class Owner(Base):
         CheckConstraint(r"bin IS NULL OR bin ~ '^[0-9]{12}$'", name="bin_format"),
         CheckConstraint(
             r"email IS NULL OR email ~* '^[^@\s]+@[^@\s]+\.[^@\s]+$'", name="email_format"
+        ),
+        # БИН уникален в пределах города; партиальный — bin NULL для физлиц без ИИН.
+        # Дублирует индекс из миграции 0006, чтобы create_all (демо-схема) тоже его создавал.
+        Index(
+            "uq_owner_region_bin", "region_id", "bin",
+            unique=True, postgresql_where=text("bin IS NOT NULL"),
         ),
     )
 
