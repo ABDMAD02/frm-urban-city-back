@@ -101,6 +101,13 @@ def validate_production_settings() -> None:
         )
     if not CORS_ORIGINS:
         raise RuntimeError("CORS_ORIGINS must be set in production")
+    # Пароль платформенного суперадмина не должен оставаться демо-значением,
+    # захардкоженным в открытом репозитории.
+    superadmin_pw = os.getenv("PLATFORM_SUPERADMIN_PASSWORD", "")
+    if not superadmin_pw or superadmin_pw == "Urb4n-SA-2026!":
+        raise RuntimeError(
+            "PLATFORM_SUPERADMIN_PASSWORD must be set to a non-demo value in production"
+        )
     # Photo uploads require R2 in production (optional only if explicitly disabled).
     require_r2 = os.getenv("R2_REQUIRED", "0").lower() in ("1", "true", "yes")
     if require_r2:

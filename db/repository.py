@@ -46,7 +46,7 @@ def _now_dt() -> datetime:
     return datetime.now(timezone.utc)
 
 
-from app.user_helpers import login_for, temp_password
+from app.user_helpers import login_for, random_temp_password, temp_password
 
 
 class DbStore:
@@ -417,9 +417,12 @@ class DbStore:
 
     # ── inspections / prescriptions ───────────────────────────────
     def list_inspections(self) -> list[Inspection]:
-        rows = self._session.scalars(
-            select(m.Inspection).options(selectinload(m.Inspection.checklist))
-        ).all()
+        q = select(m.Inspection).options(selectinload(m.Inspection.checklist))
+        if self._region_id:
+            q = q.join(m.CityObject, m.Inspection.object_id == m.CityObject.id).where(
+                m.CityObject.region_id == self._region_id
+            )
+        rows = self._session.scalars(q).all()
         out = []
         for row in rows:
             obj_code = self._object_code(row.object_id)
@@ -564,7 +567,12 @@ class DbStore:
         return pr
 
     def list_prescriptions(self) -> list[Prescription]:
-        rows = self._session.scalars(select(m.Prescription)).all()
+        q = select(m.Prescription)
+        if self._region_id:
+            q = q.join(m.CityObject, m.Prescription.object_id == m.CityObject.id).where(
+                m.CityObject.region_id == self._region_id
+            )
+        rows = self._session.scalars(q).all()
         out = []
         for row in rows:
             obj_code = self._object_code(row.object_id)
@@ -759,7 +767,7 @@ class DbStore:
         self._assert_user_limit(region_id)
         code = self.next_id("u")
         login = login_for(body.name)
-        plain = temp_password(code)
+        plain = random_temp_password()
 
         row = m.AppUser(
             id=uuid_for_code(code),
@@ -825,7 +833,7 @@ class DbStore:
             from app.passwords import hash_password
 
             row.status = AccountStatus.active
-            plain = temp_password(row.code or uid_str)
+            plain = random_temp_password()
             row.password_hash = hash_password(plain)
             creds = Credentials(login=row.login or "", tempPassword=plain)
         self._session.flush()
@@ -983,7 +991,14 @@ class DbStore:
         return [mappers.photo(r, object_code=self._object_code(r.object_id)) for r in rows]
 
     def list_history(self) -> list[HistoryEvent]:
-        rows = self._session.scalars(select(m.HistoryEvent)).all()
+        # Скоуп по региону через объект: history_event.region_id нет, связь только
+        # через object_id. Без join /audit отдавал журнал всех городов (утечка).
+        q = select(m.HistoryEvent)
+        if self._region_id:
+            q = q.join(m.CityObject, m.HistoryEvent.object_id == m.CityObject.id).where(
+                m.CityObject.region_id == self._region_id
+            )
+        rows = self._session.scalars(q).all()
         return [mappers.history_event(r, object_code=self._object_code(r.object_id)) for r in rows]
 
     def append_history(self, event: HistoryEvent) -> HistoryEvent:
@@ -1004,7 +1019,12 @@ class DbStore:
         return event
 
     def list_versions(self) -> list[dto.ObjectVersion]:
-        rows = self._session.scalars(select(m.ObjectVersion)).all()
+        q = select(m.ObjectVersion)
+        if self._region_id:
+            q = q.join(m.CityObject, m.ObjectVersion.object_id == m.CityObject.id).where(
+                m.CityObject.region_id == self._region_id
+            )
+        rows = self._session.scalars(q).all()
         return [mappers.object_version(r, object_code=self._object_code(r.object_id)) for r in rows]
 
     def inspection_trend(self) -> list[TrendPoint]:

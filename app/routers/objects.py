@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from ..deps import StoreDep
-from ..security import accessible_object_ids, ensure_owner_business_access, ensure_object_access, get_current_user, require_region_admin
+from ..security import accessible_object_ids, ensure_owner_business_access, ensure_object_access, get_current_user, require_operator, require_region_admin
 from ..fsm import can_transition
 from ..models import (
     BulkDeleteObjectsRequest,
@@ -67,7 +67,7 @@ def list_objects(
 
 
 @router.post("/objects", response_model=CityObject, status_code=201, summary="Создать объект")
-def create_object(body: CreateObjectRequest, repo: StoreDep, user: User = Depends(get_current_user)):
+def create_object(body: CreateObjectRequest, repo: StoreDep, user: User = Depends(require_operator)):
     return repo.create_object(body, user)
 
 

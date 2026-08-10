@@ -29,6 +29,17 @@ def create_user(body: CreateUserRequest, repo: StoreDep, actor: User = Depends(r
 
 @router.patch("/users/{uid}", response_model=UpdateUserResponse, summary="Правка пользователя")
 def update_user(uid: str, body: UpdateUserRequest, repo: StoreDep, actor: User = Depends(require_region_admin)):
+    # Админ района правит только урбанистов/владельцев своего региона. Без этой
+    # проверки PATCH /users/{superadmin} со сбросом пароля отдавал креды супер-
+    # админа (захват платформы). Зеркалит guard из delete_user ниже.
+    target = repo.find_user_by_id(uid)
+    if target is None:
+        raise HTTPException(404, detail={"message": "Пользователь не найден", "code": "not_found"})
+    if target.role in (Role.region_admin, Role.platform_superadmin):
+        raise HTTPException(
+            403,
+            detail={"message": "Нельзя редактировать администратора", "code": "forbidden"},
+        )
     user, creds = repo.update_user(uid, body)
     if user is None:
         raise HTTPException(404, "Пользователь не найден")

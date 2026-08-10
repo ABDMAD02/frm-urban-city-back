@@ -88,6 +88,24 @@ def require_region_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+def require_operator(user: User = Depends(get_current_user)) -> User:
+    """Контролирующая сторона: урбанист или админ района.
+
+    Владелец (`owner`) — контролируемая сторона: он не создаёт объекты, не
+    проводит проверки и не редактирует уведомления. Иначе нарушитель сам себе
+    закрывает нарушение — контрольный процесс теряет смысл.
+    """
+    if user.role not in (Role.urbanist, Role.region_admin):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "Действие доступно только сотруднику урбанистики или администратору",
+                "code": "forbidden_role",
+            },
+        )
+    return user
+
+
 def owner_business_ids(repo: StoreDep, user: User) -> set[str]:
     """Все business Owner.id, привязанные к owner-аккаунту."""
     if user.role != Role.owner:

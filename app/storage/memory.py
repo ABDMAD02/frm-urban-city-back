@@ -36,7 +36,7 @@ from app.models import (
     UpdateUserRequest,
     User,
 )
-from app.user_helpers import login_for, temp_password
+from app.user_helpers import login_for, random_temp_password, temp_password
 
 
 def _default_checklist(region_id: str = "uralsk") -> list[ChecklistTemplateItem]:
@@ -345,7 +345,7 @@ class MemoryStore:
 
         code = store.next_id("u")
         login = login_for(body.name)
-        plain = temp_password(code)
+        plain = random_temp_password()
         if body.role.value == "owner" and body.ownerId:
             owner = self.find_owner(body.ownerId)
             if owner is None:
@@ -392,7 +392,7 @@ class MemoryStore:
             user.microdistrictIds = body.microdistrictIds
         if body.resetPassword:
             user.status = "active"
-            plain = temp_password(uid)
+            plain = random_temp_password()
             self._password_hashes[user.id] = hash_password(plain)
             creds = Credentials(login=user.login or "", tempPassword=plain)
         return user, creds

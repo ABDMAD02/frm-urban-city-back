@@ -95,17 +95,24 @@ def upgrade() -> None:
     )
     op.create_index("ix_checklist_template_region_id", "checklist_template", ["region_id"])
 
-    # Seed Uralsk checklist (6 items from TZ)
+    # Seed Uralsk checklist (6 items from TZ).
+    # Регион 'uralsk' создаётся сидом (db/seed.py), который идёт ПОСЛЕ миграций,
+    # поэтому на пустой базе его здесь ещё нет. Безусловный INSERT ронял миграцию
+    # с ForeignKeyViolation. Вставляем только если регион уже существует;
+    # для чистой базы чек-лист засевает db/seed.py._ensure_platform_bootstrap.
     op.execute(
         """
         INSERT INTO checklist_template (id, region_id, key, title_ru, title_kz, category, sort_order, is_visible)
-        VALUES
-          (gen_random_uuid(), 'uralsk', 'facade', 'Фасад', 'Фасад', 'building', 1, true),
-          (gen_random_uuid(), 'uralsk', 'signboard', 'Вывеска', 'Маңдайша', 'signage', 2, true),
-          (gen_random_uuid(), 'uralsk', 'ads', 'Реклама', 'Жарнама', 'advertising', 3, true),
-          (gen_random_uuid(), 'uralsk', 'banners', 'Баннеры', 'Баннерлер', 'advertising', 4, true),
-          (gen_random_uuid(), 'uralsk', 'lighting', 'Освещение', 'Жарықтандыру', 'lighting', 5, true),
-          (gen_random_uuid(), 'uralsk', 'materials', 'Материалы', 'Материалдар', 'materials', 6, true)
+        SELECT gen_random_uuid(), 'uralsk', v.key, v.title_ru, v.title_kz, v.category, v.sort_order, true
+        FROM (VALUES
+          ('facade', 'Фасад', 'Фасад', 'building', 1),
+          ('signboard', 'Вывеска', 'Маңдайша', 'signage', 2),
+          ('ads', 'Реклама', 'Жарнама', 'advertising', 3),
+          ('banners', 'Баннеры', 'Баннерлер', 'advertising', 4),
+          ('lighting', 'Освещение', 'Жарықтандыру', 'lighting', 5),
+          ('materials', 'Материалы', 'Материалдар', 'materials', 6)
+        ) AS v(key, title_ru, title_kz, category, sort_order)
+        WHERE EXISTS (SELECT 1 FROM region WHERE id = 'uralsk')
         ON CONFLICT DO NOTHING
         """
     )
