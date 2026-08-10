@@ -206,7 +206,6 @@ class DbStore:
         from app.address import DEFAULT_ADDRESS_SCHEMA, build_address
 
         region_id = actor.regionId or self._region_id or "uralsk"
-        self._assert_object_limit(region_id)
         code = self.next_id("o")
         owner_uid = self._require_owner_uuid(body.ownerId, region_id=region_id)
         district_id = body.districtId
@@ -268,32 +267,6 @@ class DbStore:
             )
         )
         return self._city_object_dto(row)
-
-    def _assert_object_limit(self, region_id: str) -> None:
-        from db.platform_repository import PlatformStore
-        try:
-            PlatformStore(self._session).check_limits(region_id, objects=True)
-        except OverflowError as exc:
-            from fastapi import HTTPException
-            raise HTTPException(
-                status_code=403,
-                detail={"message": "Лимит объектов подписки исчерпан", "code": str(exc)},
-            ) from exc
-        except LookupError:
-            pass
-
-    def _assert_user_limit(self, region_id: str) -> None:
-        from db.platform_repository import PlatformStore
-        try:
-            PlatformStore(self._session).check_limits(region_id, users=True)
-        except OverflowError as exc:
-            from fastapi import HTTPException
-            raise HTTPException(
-                status_code=403,
-                detail={"message": "Лимит пользователей подписки исчерпан", "code": str(exc)},
-            ) from exc
-        except LookupError:
-            pass
 
     def update_object(self, oid: str, patch: ObjectPatch, note: str | None, actor: str) -> CityObject | None:
         from app.address import DEFAULT_ADDRESS_SCHEMA, build_address
@@ -776,7 +749,6 @@ class DbStore:
         from app.passwords import hash_password
 
         region_id = self._region_id or "uralsk"
-        self._assert_user_limit(region_id)
         code = self.next_id("u")
         login = login_for(body.name)
         plain = random_temp_password()

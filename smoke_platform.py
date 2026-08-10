@@ -36,11 +36,9 @@ check("GET /auth/v2/me", me.status_code == 200 and me.json().get("role") == "pla
 regions = c.get("/api/v1/platform/regions", headers=H)
 check("GET /platform/regions", regions.status_code == 200 and len(regions.json()) >= 1)
 
-plans = c.get("/api/v1/platform/plans", headers=H)
-check("GET /platform/plans", plans.status_code == 200 and len(plans.json()) == 3)
-
-subs = c.get("/api/v1/platform/subscriptions", headers=H)
-check("GET /platform/subscriptions", subs.status_code == 200 and len(subs.json()) >= 1)
+# Подписки/тарифы удалены — ручек /plans и /subscriptions больше нет.
+check("GET /platform/plans → 404", c.get("/api/v1/platform/plans", headers=H).status_code == 404)
+check("GET /platform/subscriptions → 404", c.get("/api/v1/platform/subscriptions", headers=H).status_code == 404)
 
 admins = c.get("/api/v1/platform/admin-users", headers=H)
 check("GET /platform/admin-users", admins.status_code == 200 and len(admins.json()) >= 1)
@@ -57,22 +55,16 @@ prov = c.post(
         "timezone": "Asia/Almaty",
         "locale": "ru",
         "mapProvider": "2gis",
-        "plan": "trial",
         "adminName": "Ерлан Тестов",
     },
 )
 check("POST /platform/regions provision", prov.status_code == 201 and "credentials" in prov.json())
+check("  провижн НЕ возвращает subscription", "subscription" not in prov.json())
 if prov.status_code == 201:
     check("  credentials login", bool(prov.json()["credentials"]["login"]))
     rid = prov.json()["region"]["id"]
     st = c.patch(f"/api/v1/platform/regions/{rid}/status", headers=H, json={"status": "active"})
     check("PATCH status → active", st.status_code == 200 and st.json()["status"] == "active")
-    sub = c.patch(
-        f"/api/v1/platform/regions/{rid}/subscription",
-        headers=H,
-        json={"plan": "standard", "validUntil": "2027-12-31"},
-    )
-    check("PATCH subscription", sub.status_code == 200 and sub.json()["plan"] == "standard")
     re = c.post(
         f"/api/v1/platform/regions/{rid}/admin-account",
         headers=H,

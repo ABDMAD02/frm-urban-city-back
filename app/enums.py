@@ -16,16 +16,6 @@ class RegionStatus(str, Enum):
     archived = "archived"
 
 
-class SubscriptionPlan(str, Enum):
-    trial = "trial"
-    standard = "standard"
-    pro = "pro"
-
-
-class SubscriptionStatus(str, Enum):
-    active = "active"
-    grace = "grace"
-    expired = "expired"
 
 
 class Locale(str, Enum):

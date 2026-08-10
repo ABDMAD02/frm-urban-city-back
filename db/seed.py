@@ -24,7 +24,6 @@ from db.enums import (
     PhotoKind,
     PrescriptionStatus,
     Role,
-    SubscriptionPlan,
 )
 from db.codes import uuid_for_code
 from db import models as m
@@ -57,27 +56,6 @@ def _backfill_password_hashes(session: Session) -> None:
 
 
 DEFAULT_REGION_ID = "uralsk"
-
-
-def _ensure_plans(session: Session) -> None:
-    plans = (
-        (SubscriptionPlan.trial, "Trial", 10, 50, "Бесплатно"),
-        (SubscriptionPlan.standard, "Standard", 50, 500, "По запросу"),
-        (SubscriptionPlan.pro, "Pro", 200, 5000, "По запросу"),
-    )
-    existing_plans = set(session.scalars(select(m.Plan.id)).all())
-    for plan_id, label, max_users, max_objects, price_hint in plans:
-        if plan_id not in existing_plans:
-            session.add(
-                m.Plan(
-                    id=plan_id,
-                    label=label,
-                    max_users=max_users,
-                    max_objects=max_objects,
-                    price_hint=price_hint,
-                )
-            )
-    session.flush()
 
 
 def _ensure_platform_superadmin(session: Session) -> None:
@@ -121,10 +99,8 @@ def _ensure_platform_superadmin(session: Session) -> None:
 
 
 def _ensure_platform_bootstrap(session: Session, region_id: str = DEFAULT_REGION_ID) -> None:
-    """Plans + default region/subscription — only for demo seed path."""
+    """Default region — only for demo seed path (подписок больше нет)."""
     from sqlalchemy import text
-
-    _ensure_plans(session)
 
     session.execute(
         text(
@@ -135,25 +111,6 @@ def _ensure_platform_bootstrap(session: Session, region_id: str = DEFAULT_REGION
             """
         ),
         {"id": region_id, "code": region_id, "name": "Уральск"},
-    )
-    today = date.today()
-    session.execute(
-        text(
-            """
-            INSERT INTO subscription (
-              region_id, plan, status, max_users, max_objects, valid_from, valid_until
-            )
-            VALUES (
-              :region_id, 'standard', 'active', 50, 500, :valid_from, :valid_until
-            )
-            ON CONFLICT (region_id) DO NOTHING
-            """
-        ),
-        {
-            "region_id": region_id,
-            "valid_from": today,
-            "valid_until": today + timedelta(days=365),
-        },
     )
 
     # Дизайн-код города. На пустой базе миграция 0005 его пропускает — региона
@@ -180,9 +137,8 @@ def _ensure_platform_bootstrap(session: Session, region_id: str = DEFAULT_REGION
 
 
 def run_platform_bootstrap(session: Session) -> None:
-    """Minimal bootstrap: plan catalog + platform superadmin. Tenant tables stay empty."""
+    """Minimal bootstrap: platform superadmin. Tenant tables stay empty."""
     _backfill_password_hashes(session)
-    _ensure_plans(session)
     _ensure_platform_superadmin(session)
 
 

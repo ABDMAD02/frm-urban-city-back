@@ -15,20 +15,15 @@ from app.enums import (
     PlatformAuditAction,
     RegionStatus,
     Role,
-    SubscriptionPlan,
-    SubscriptionStatus,
 )
 from app.models import Credentials
 from app.platform_models import (
     AdminUser,
     AuditEvent,
-    Plan,
     ProvisionRegionRequest,
     Region,
     RegionAdminAccount,
     ReissueAdminRequest,
-    Subscription,
-    SubscriptionPatch,
 )
 from app.store import TYPES
 from app.user_helpers import login_for, random_temp_password, temp_password
@@ -42,8 +37,6 @@ from db.enums import (
     PlatformAuditAction as DbAuditAction,
     RegionStatus as DbRegionStatus,
     Role as DbRole,
-    SubscriptionPlan as DbPlan,
-    SubscriptionStatus as DbSubStatus,
 )
 
 DEFAULT_REGION = "uralsk"
@@ -109,31 +102,6 @@ class PlatformStore:
             addressSchema=getattr(row, "address_schema", None) or "microdistrict,street,house",
         )
 
-    def _usage(self, region_id: str) -> tuple[int, int]:
-        users = self._session.scalar(
-            select(func.count()).select_from(m.AppUser).where(
-                m.AppUser.region_id == region_id,
-                m.AppUser.role != DbRole.platform_superadmin,
-            )
-        ) or 0
-        objects = self._session.scalar(
-            select(func.count()).select_from(m.CityObject).where(m.CityObject.region_id == region_id)
-        ) or 0
-        return int(users), int(objects)
-
-    def _subscription(self, row: m.Subscription) -> Subscription:
-        used_u, used_o = self._usage(row.region_id)
-        return Subscription(
-            regionId=row.region_id,
-            plan=SubscriptionPlan(row.plan.value),
-            status=SubscriptionStatus(row.status.value),
-            maxUsers=row.max_users,
-            maxObjects=row.max_objects,
-            usersUsed=used_u,
-            objectsUsed=used_o,
-            validFrom=_d(row.valid_from),
-            validUntil=_d(row.valid_until),
-        )
 
     def _admin_user(self, row: m.AppUser) -> AdminUser:
         return AdminUser(
@@ -261,10 +229,6 @@ class PlatformStore:
         rows = self._session.scalars(select(m.Region).order_by(m.Region.created_at)).all()
         return [self._region(r) for r in rows]
 
-    def list_subscriptions(self) -> list[Subscription]:
-        rows = self._session.scalars(select(m.Subscription)).all()
-        return [self._subscription(r) for r in rows]
-
     def list_admin_users(self) -> list[AdminUser]:
         rows = self._session.scalars(
             select(m.AppUser).where(m.AppUser.role == DbRole.platform_superadmin)
@@ -276,19 +240,6 @@ class PlatformStore:
             select(m.AppUser).where(m.AppUser.role == DbRole.region_admin)
         ).all()
         return [self._region_admin(r) for r in rows]
-
-    def list_plans(self) -> list[Plan]:
-        rows = self._session.scalars(select(m.Plan)).all()
-        return [
-            Plan(
-                id=SubscriptionPlan(r.id.value if hasattr(r.id, "value") else r.id),
-                label=r.label,
-                maxUsers=r.max_users,
-                maxObjects=r.max_objects,
-                priceHint=r.price_hint,
-            )
-            for r in rows
-        ]
 
     def list_audit(
         self,
@@ -339,7 +290,7 @@ class PlatformStore:
     # ── mutations ─────────────────────────────────────────────────
     def provision_region(
         self, body: ProvisionRegionRequest, *, actor: str
-    ) -> tuple[Region, Subscription, RegionAdminAccount, Credentials]:
+    ) -> tuple[Region, RegionAdminAccount, Credentials]:
         code = re.sub(r"[^a-z0-9_-]", "", body.code.strip().lower())
         if not code:
             raise ValueError("invalid_code")
@@ -347,17 +298,11 @@ class PlatformStore:
         if self._session.get(m.Region, region_id):
             raise LookupError("region_exists")
 
-        plan_row = self._session.get(m.Plan, DbPlan(body.plan.value))
-        if plan_row is None:
-            raise LookupError("plan_not_found")
-
-        today = date.today()
-        months = 1 if body.plan == SubscriptionPlan.trial else 12
         region = m.Region(
             id=region_id,
             code=code,
             name=body.name.strip(),
-            status=DbRegionStatus.trial if body.plan == SubscriptionPlan.trial else DbRegionStatus.active,
+            status=DbRegionStatus.active,
             timezone=body.timezone,
             locale=DbLocale(body.locale.value),
             map_provider=DbMapProvider(body.mapProvider.value),
@@ -372,18 +317,6 @@ class PlatformStore:
         self._session.add(region)
         self._session.flush()
 
-        sub = m.Subscription(
-            region_id=region_id,
-            plan=DbPlan(body.plan.value),
-            status=DbSubStatus.active,
-            max_users=plan_row.max_users,
-            max_objects=plan_row.max_objects,
-            valid_from=today,
-            valid_until=today + timedelta(days=30 * months),
-        )
-        self._session.add(sub)
-        self._session.flush()
-
         self._seed_region_refs(region_id)
         self._seed_checklist_template(region_id)
         account, creds = self._issue_region_admin(region_id=region_id, name=body.adminName)
@@ -391,7 +324,7 @@ class PlatformStore:
             region_id=region_id,
             actor=actor,
             action=PlatformAuditAction.region_provisioned,
-            detail=f"plan={body.plan.value}; admin={account.login}",
+            detail=f"admin={account.login}",
         )
         self._write_audit(
             region_id=region_id,
@@ -400,7 +333,7 @@ class PlatformStore:
             detail=account.login,
         )
         self._session.flush()
-        return self._region(region), self._subscription(sub), account, creds
+        return self._region(region), account, creds
 
     def patch_region_status(self, region_id: str, status: RegionStatus, *, actor: str) -> Region:
         row = self._session.get(m.Region, region_id)
@@ -419,33 +352,6 @@ class PlatformStore:
         self._session.flush()
         return self._region(row)
 
-    def patch_subscription(
-        self, region_id: str, body: SubscriptionPatch, *, actor: str
-    ) -> Subscription:
-        row = self._session.get(m.Subscription, region_id)
-        if row is None:
-            raise LookupError("subscription_not_found")
-        plan_row = self._session.get(m.Plan, DbPlan(body.plan.value))
-        if plan_row is None:
-            raise LookupError("plan_not_found")
-        until = date.fromisoformat(body.validUntil[:10])
-        row.plan = DbPlan(body.plan.value)
-        row.max_users = plan_row.max_users
-        row.max_objects = plan_row.max_objects
-        row.valid_until = until
-        if until < date.today():
-            row.status = DbSubStatus.expired
-        else:
-            row.status = DbSubStatus.active
-        self._write_audit(
-            region_id=region_id,
-            actor=actor,
-            action=PlatformAuditAction.subscription_renewed,
-            detail=f"plan={body.plan.value}; until={until.isoformat()}",
-        )
-        self._session.flush()
-        return self._subscription(row)
-
     def reissue_admin(
         self, region_id: str, body: ReissueAdminRequest, *, actor: str
     ) -> tuple[RegionAdminAccount, Credentials]:
@@ -462,17 +368,6 @@ class PlatformStore:
         )
         self._session.flush()
         return account, creds
-
-    def check_limits(self, region_id: str, *, users: bool = False, objects: bool = False) -> None:
-        sub = self._session.get(m.Subscription, region_id)
-        if sub is None:
-            raise LookupError("subscription_not_found")
-        used_u, used_o = self._usage(region_id)
-        if users and used_u >= sub.max_users:
-            raise OverflowError("limit_users")
-        if objects and used_o >= sub.max_objects:
-            raise OverflowError("limit_objects")
-
 
 def _try_uuid(uid: str) -> uuid.UUID | None:
     try:
