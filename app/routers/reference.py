@@ -10,10 +10,11 @@ from ..security import (
     ensure_object_access,
     ensure_owner_business_access,
     get_current_user,
+    require_operator,
     require_region_admin,
 )
 from ..models import (
-    Owner, CreateOwnerRequest, District, DistrictCreate, Microdistrict,
+    Owner, CreateOwnerRequest, CreateOwnerResponse, District, DistrictCreate, Microdistrict,
     MicrodistrictCreate, ObjectTypeCreate, Photo, HistoryEvent, ObjectVersion, User,
     ChecklistTemplateItem, ChecklistTemplateManageRequest, Street, StreetCreate, StreetPatch,
     GeoConfig, GeoConfigPatch, CurrentCity,
@@ -33,8 +34,10 @@ def list_owners(
         if ownerUserId and ownerUserId != user.id:
             raise HTTPException(403, detail={"message": "Нет доступа к чужим бизнесам", "code": "forbidden"})
         return repo.list_owners(owner_user_id=user.id)
-    if user.role.value != "region_admin":
-        raise HTTPException(403, detail={"message": "Доступно только администратору района", "code": "forbidden"})
+    # Урбанист и админ района видят реестр бизнесов своего города (repo скоупит по региону).
+    # Урбанисту это нужно для постановки объекта «в поле».
+    if user.role.value not in ("region_admin", "urbanist"):
+        raise HTTPException(403, detail={"message": "Доступно только сотруднику города", "code": "forbidden"})
     return repo.list_owners(owner_user_id=ownerUserId)
 
 
@@ -45,9 +48,12 @@ def list_my_owners(repo: StoreDep, user: User = Depends(get_current_user)):
     return repo.list_owners(owner_user_id=user.id)
 
 
-@router.post("/owners", response_model=Owner, status_code=201, summary="Создать собственника")
-def create_owner(body: CreateOwnerRequest, repo: StoreDep, user: User = Depends(require_region_admin)):
-    return repo.create_owner(body)
+@router.post("/owners", response_model=CreateOwnerResponse, status_code=201, summary="Создать собственника")
+def create_owner(body: CreateOwnerRequest, repo: StoreDep, user: User = Depends(require_operator)):
+    # Урбанист заводит бизнес «в поле» при постановке объекта; админ — в реестре.
+    # Логин владельца обязателен и авто-создаётся (temp-пароль в credentials).
+    owner, creds = repo.create_owner(body)
+    return CreateOwnerResponse(owner=owner, credentials=creds)
 
 
 @router.patch("/owners/{wid}", response_model=Owner, summary="Правка собственника")

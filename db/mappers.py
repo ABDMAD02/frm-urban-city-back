@@ -1,10 +1,12 @@
 """ORM ↔ Pydantic (app/models.py). Публичный id — колонка ``code``."""
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date, datetime
 
-from app import models as dto
+from app import config, models as dto
+from app.domain_rules import effective_prescription_status
 from app.enums import (
     AccountStatus,
     ChecklistValue,
@@ -17,6 +19,8 @@ from app.enums import (
     Role,
 )
 from db import models as orm
+
+logger = logging.getLogger(__name__)
 
 
 def _d(v: date | datetime | str | None) -> str:
@@ -53,13 +57,14 @@ def owner(row: orm.Owner, *, owner_user_id: str | None = None) -> dto.Owner:
     )
 
 
-def user(row: orm.AppUser, *, microdistrict_ids: list[str] | None = None, owner_object_ids: list[str] | None = None) -> dto.User:
+def user(row: orm.AppUser, *, microdistrict_ids: list[str] | None = None, street_ids: list[str] | None = None, owner_object_ids: list[str] | None = None) -> dto.User:
     return dto.User(
         id=_code(row),
         name=row.name,
         role=Role(row.role.value),
         position=row.position,
         microdistrictIds=microdistrict_ids,
+        streetIds=street_ids,
         ownerObjectIds=owner_object_ids,
         login=row.login,
         status=AccountStatus(row.status.value),
@@ -80,6 +85,14 @@ def city_object(
         owner_id = _owner_public_id(row)
     if street_id is None and getattr(row, "street_id", None):
         street_id = _street_public_id(row)
+    assigned = row.__dict__.get("assigned_urbanist")
+    assigned_id = None
+    assigned_name = None
+    if assigned is not None:
+        assigned_id = assigned.code or str(assigned.id)
+        assigned_name = assigned.name
+    elif getattr(row, "assigned_urbanist_id", None):
+        assigned_id = str(row.assigned_urbanist_id)
     return dto.CityObject(
         id=_code(row),
         name=row.name,
@@ -97,45 +110,34 @@ def city_object(
         ownerId=owner_id,
         status=ObjectStatus(row.status.value),
         responsible=row.responsible or "",
+        assignedUrbanistId=assigned_id,
+        assignedUrbanistName=assigned_name,
         createdAt=_d(row.created_at),
         updatedAt=_d(row.updated_at),
     )
 
 
-# Заполняется репозиторием: owner uuid → code
-_OWNER_UUID_TO_CODE: dict[uuid.UUID, str] = {}
-_STREET_UUID_TO_CODE: dict[uuid.UUID, str] = {}
-
-
-def set_owner_code_map(mapping: dict[uuid.UUID, str]) -> None:
-    global _OWNER_UUID_TO_CODE
-    _OWNER_UUID_TO_CODE = mapping
-
-
-def set_street_code_map(mapping: dict[uuid.UUID, str]) -> None:
-    global _STREET_UUID_TO_CODE
-    _STREET_UUID_TO_CODE = mapping
-
-
-def _street_code(uid: uuid.UUID | None) -> str | None:
-    if uid is None:
-        return None
-    return _STREET_UUID_TO_CODE.get(uid) or str(uid)
 
 
 def _owner_public_id(row: orm.CityObject) -> str:
-    """Prefer Owner.code via relationship; fall back to module map / UUID string."""
+    """Публичный код владельца (w11) из загруженной связи; фолбэк — строка UUID."""
     if not row.owner_id:
         return "w4"
     owner = row.__dict__.get("owner")
     if owner is None:
         try:
             owner = row.owner
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                "Lazy-load of Owner relation failed for owner_id=%s, falling back to UUID: %s: %s",
+                row.owner_id,
+                type(exc).__name__,
+                exc,
+            )
             owner = None
     if owner is not None:
         return owner.code or str(owner.id)
-    return _owner_code(row.owner_id)
+    return str(row.owner_id)
 
 
 def _street_public_id(row: orm.CityObject) -> str | None:
@@ -145,11 +147,17 @@ def _street_public_id(row: orm.CityObject) -> str | None:
     if street is None:
         try:
             street = row.street_row
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                "Lazy-load of Street relation failed for street_id=%s, falling back to UUID: %s: %s",
+                getattr(row, "street_id", None),
+                type(exc).__name__,
+                exc,
+            )
             street = None
     if street is not None:
         return street.code or str(street.id)
-    return _street_code(row.street_id)
+    return str(row.street_id)
 
 
 def checklist_template(row: orm.ChecklistTemplate) -> dto.ChecklistTemplateItem:
@@ -173,12 +181,6 @@ def street(row: orm.Street) -> dto.Street:
     )
 
 
-def _owner_code(uid: uuid.UUID | None) -> str:
-    if uid is None:
-        return "w4"
-    return _OWNER_UUID_TO_CODE.get(uid, str(uid))
-
-
 def checklist_item(row: orm.ChecklistItem) -> dto.ChecklistItem:
     return dto.ChecklistItem(
         key=row.key,
@@ -189,10 +191,17 @@ def checklist_item(row: orm.ChecklistItem) -> dto.ChecklistItem:
 
 
 def inspection(row: orm.Inspection, *, object_code: str, photo_ids: list[str]) -> dto.Inspection:
+    inspector_user = row.__dict__.get("inspector_user")
+    inspector_code = None
+    if inspector_user is not None:
+        inspector_code = inspector_user.code or str(inspector_user.id)
+    elif row.inspector_id:
+        inspector_code = str(row.inspector_id)
     return dto.Inspection(
         id=_code(row),
         objectId=object_code,
         inspector=row.inspector,
+        inspectorId=inspector_code,
         date=_d(row.date),
         result=InspectionResult(row.result.value),
         checklist=[checklist_item(c) for c in row.checklist],
@@ -211,7 +220,9 @@ def prescription(row: orm.Prescription, *, object_code: str, inspection_code: st
         issuedAt=_d(row.issued_at),
         deadline=_d(row.deadline),
         reinspectionDate=_d(row.reinspection_date),
-        status=PrescriptionStatus(row.status.value),
+        status=effective_prescription_status(
+            PrescriptionStatus(row.status.value), _d(row.deadline), config.today_str()
+        ),
     )
 
 

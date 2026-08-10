@@ -53,17 +53,10 @@ class DbStore:
     def __init__(self, session: Session, *, region_id: str | None = "uralsk") -> None:
         self._session = session
         self._region_id = region_id
-        mappers.set_owner_code_map(self._owner_code_map())
-        mappers.set_street_code_map(self._street_code_map())
         self._counters = self._load_counters()
 
     def set_region(self, region_id: str | None) -> None:
         self._region_id = region_id
-
-    def _region_filter(self, column):
-        if self._region_id:
-            return column == self._region_id
-        return True
 
     def _ensure_same_region(self, row_region_id: str | None) -> None:
         """403 if row belongs to another city (tenant isolation)."""
@@ -80,26 +73,12 @@ class DbStore:
 
     def commit(self) -> None:
         self._session.commit()
-        mappers.set_owner_code_map(self._owner_code_map())
-        mappers.set_street_code_map(self._street_code_map())
 
     def rollback(self) -> None:
         self._session.rollback()
 
     # ── lookups ───────────────────────────────────────────────────
-    def _owner_code_map(self) -> dict[uuid.UUID, str]:
-        q = select(m.Owner.id, m.Owner.code)
-        if self._region_id:
-            q = q.where(m.Owner.region_id == self._region_id)
-        rows = self._session.execute(q)
-        return {r.id: r.code for r in rows if r.code}
 
-    def _street_code_map(self) -> dict[uuid.UUID, str]:
-        q = select(m.Street.id, m.Street.code)
-        if self._region_id:
-            q = q.where(m.Street.region_id == self._region_id)
-        rows = self._session.execute(q)
-        return {r.id: r.code for r in rows if r.code}
 
     def _object_uuid(self, code: str) -> uuid.UUID | None:
         row = self._session.scalar(select(m.CityObject).where(m.CityObject.code == code))
@@ -190,12 +169,15 @@ class DbStore:
             row.owner = self._session.get(m.Owner, row.owner_id)
         if row.street_id and row.__dict__.get("street_row") is None:
             row.street_row = self._session.get(m.Street, row.street_id)
+        if row.assigned_urbanist_id and row.__dict__.get("assigned_urbanist") is None:
+            row.assigned_urbanist = self._session.get(m.AppUser, row.assigned_urbanist_id)
         return mappers.city_object(row)
 
     def list_objects(self) -> list[CityObject]:
         q = select(m.CityObject).options(
             selectinload(m.CityObject.owner),
             selectinload(m.CityObject.street_row),
+            selectinload(m.CityObject.assigned_urbanist),
         )
         if self._region_id:
             q = q.where(m.CityObject.region_id == self._region_id)
@@ -212,6 +194,7 @@ class DbStore:
             options=(
                 selectinload(m.CityObject.owner),
                 selectinload(m.CityObject.street_row),
+                selectinload(m.CityObject.assigned_urbanist),
             ),
         )
         if row is None:
@@ -371,6 +354,12 @@ class DbStore:
                 house=row.house,
                 apartment=row.apartment,
             )
+        # assignedUrbanistId: явный null = снять override (exclude_none его глотает).
+        if "assignedUrbanistId" in patch.model_fields_set:
+            aid = patch.assignedUrbanistId
+            row.assigned_urbanist_id = self._resolve_uuid(m.AppUser, aid) if aid else None
+            if "assigned_urbanist" in row.__dict__:
+                del row.__dict__["assigned_urbanist"]
         row.updated_at = _parse_date(config.today_str())
         htype = HistoryType.status_changed if "status" in data else HistoryType.card_updated
         self.append_history(HistoryEvent(
@@ -417,7 +406,10 @@ class DbStore:
 
     # ── inspections / prescriptions ───────────────────────────────
     def list_inspections(self) -> list[Inspection]:
-        q = select(m.Inspection).options(selectinload(m.Inspection.checklist))
+        q = select(m.Inspection).options(
+            selectinload(m.Inspection.checklist),
+            selectinload(m.Inspection.inspector_user),
+        )
         if self._region_id:
             q = q.join(m.CityObject, m.Inspection.object_id == m.CityObject.id).where(
                 m.CityObject.region_id == self._region_id
@@ -443,6 +435,7 @@ class DbStore:
             id=uuid_for_code(code),
             code=code,
             object_id=obj_uid,
+            inspector_id=self._resolve_uuid(m.AppUser, insp.inspectorId) if insp.inspectorId else None,
             inspector=insp.inspector,
             date=_parse_date(insp.date),
             result=insp.result,
@@ -627,9 +620,28 @@ class DbStore:
         self._session.flush()
         return self.find_prescription(pid)
 
+    def mark_prescription_sent(self, pid: str, to: str | None) -> str | None:
+        """Зафиксировать выдачу уведомления ответственному лицу (sent_at/sent_to).
+
+        Реальной доставки (email/Telegram) пока нет — уведомление бумажное,
+        выдаётся лично. Здесь фиксируется момент и адресат выдачи как аудит-след,
+        а не факт электронной отправки.
+        """
+        from datetime import datetime, timezone
+
+        uid = self._resolve_uuid(m.Prescription, pid)
+        row = self._session.get(m.Prescription, uid) if uid else None
+        if row is None:
+            return None
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        row.sent_at = now
+        row.sent_to = to
+        self._session.flush()
+        return now.isoformat().replace("+00:00", "Z")
+
     # ── users / auth ──────────────────────────────────────────────
     def list_users(self) -> list[User]:
-        q = select(m.AppUser).options(selectinload(m.AppUser.microdistricts)).where(
+        q = select(m.AppUser).options(selectinload(m.AppUser.microdistricts), selectinload(m.AppUser.streets)).where(
             m.AppUser.role != Role.platform_superadmin
         )
         if self._region_id:
@@ -689,16 +701,16 @@ class DbStore:
         self._session.flush()
         return True
 
-    def find_region_admin(self) -> User | None:
-        row = self._session.scalar(
-            select(m.AppUser)
-            .where(m.AppUser.role == Role.region_admin)
-            .options(selectinload(m.AppUser.microdistricts))
-        )
-        return self._map_user(row) if row else None
-
     def _map_user(self, row: m.AppUser) -> User:
         md_ids = [um.microdistrict_id for um in row.microdistricts] if row.microdistricts else None
+        st_ids = None
+        if row.streets:
+            st_uids = [us.street_id for us in row.streets]
+            st_ids = list(
+                self._session.scalars(
+                    select(m.Street.code).where(m.Street.id.in_(st_uids), m.Street.code.is_not(None))
+                ).all()
+            ) or None
         owner_objs = None
         if row.role.value == "owner":
             business_ids = list(
@@ -717,7 +729,7 @@ class DbStore:
                     )
                 ).all()
                 owner_objs = list(objs)
-        return mappers.user(row, microdistrict_ids=md_ids, owner_object_ids=owner_objs)
+        return mappers.user(row, microdistrict_ids=md_ids, street_ids=st_ids, owner_object_ids=owner_objs)
 
     def _user_public_id(self, uid: uuid.UUID | None) -> str | None:
         if uid is None:
@@ -829,6 +841,13 @@ class DbStore:
                 self._session.delete(um)
             for md_id in body.microdistrictIds:
                 self._session.add(m.UserMicrodistrict(user_id=row.id, microdistrict_id=md_id))
+        if body.streetIds is not None:
+            for us in list(row.streets):
+                self._session.delete(us)
+            for st_code in body.streetIds:
+                st_uid = self._resolve_uuid(m.Street, st_code)
+                if st_uid is not None:
+                    self._session.add(m.UserStreet(user_id=row.id, street_id=st_uid))
         if body.resetPassword:
             from app.passwords import hash_password
 
@@ -873,9 +892,34 @@ class DbStore:
         self._ensure_same_region(row.region_id)
         return self._owner_dto(row)
 
-    def create_owner(self, body: CreateOwnerRequest) -> Owner:
+    def create_owner(self, body: CreateOwnerRequest) -> tuple[Owner, Credentials | None]:
+        from app.passwords import hash_password
+
         region_id = self._region_id or "uralsk"
-        account_uid = self._resolve_owner_account(body.ownerUserId, region_id=region_id)
+        creds: Credentials | None = None
+        if body.ownerUserId:
+            account_uid = self._resolve_owner_account(body.ownerUserId, region_id=region_id)
+        else:
+            # Логин владельца обязателен — авто-создаём аккаунт role=owner (temp-пароль).
+            ucode = self.next_id("u")
+            login = login_for(body.name)
+            plain = random_temp_password()
+            account = m.AppUser(
+                id=uuid_for_code(ucode),
+                code=ucode,
+                name=body.name.strip(),
+                role=Role.owner,
+                position="Владелец бизнеса",
+                login=login,
+                password_hash=hash_password(plain),
+                status=AccountStatus.active,
+                region_id=region_id,
+                created_at=_parse_date(config.today_str()),
+            )
+            self._session.add(account)
+            self._session.flush()
+            account_uid = account.id
+            creds = Credentials(login=login, tempPassword=plain)
         code = self.next_id("w")
         row = m.Owner(
             id=uuid_for_code(code),
@@ -890,8 +934,7 @@ class DbStore:
         )
         self._session.add(row)
         self._session.flush()
-        mappers.set_owner_code_map(self._owner_code_map())
-        return self._owner_dto(row)
+        return self._owner_dto(row), creds
 
     def update_owner(self, wid: str, body: CreateOwnerRequest) -> Owner | None:
         uid = self._resolve_uuid(m.Owner, wid)
@@ -1028,9 +1071,19 @@ class DbStore:
         return [mappers.object_version(r, object_code=self._object_code(r.object_id)) for r in rows]
 
     def inspection_trend(self) -> list[TrendPoint]:
-        from app import store as seed
+        from app import config
+        from app.domain_rules import inspection_trend_counts
 
-        return seed.INSPECTION_TREND
+        q = select(m.Inspection.date)
+        if self._region_id:
+            q = q.join(m.CityObject, m.Inspection.object_id == m.CityObject.id).where(
+                m.CityObject.region_id == self._region_id
+            )
+        dates = list(self._session.scalars(q).all())
+        return [
+            TrendPoint(month=label, value=value)
+            for label, value in inspection_trend_counts(dates, config.today_date())
+        ]
 
     # ── checklist template / streets / geo ─────────────────────────
     def list_checklist_template(self, *, visible_only: bool = True) -> list[dto.ChecklistTemplateItem]:
@@ -1091,7 +1144,6 @@ class DbStore:
         if self._region_id:
             q = q.where(m.Street.region_id == self._region_id)
         q = q.order_by(m.Street.name)
-        mappers.set_street_code_map(self._street_code_map())
         return [mappers.street(r) for r in self._session.scalars(q).all()]
 
     def create_street(self, body: dto.StreetCreate) -> dto.Street:
@@ -1109,7 +1161,6 @@ class DbStore:
         )
         self._session.add(row)
         self._session.flush()
-        mappers.set_street_code_map(self._street_code_map())
         return mappers.street(row)
 
     def _street_row(self, sid: str) -> m.Street | None:
@@ -1134,7 +1185,6 @@ class DbStore:
         if "microdistrictId" in data:
             row.microdistrict_id = data["microdistrictId"]
         self._session.flush()
-        mappers.set_street_code_map(self._street_code_map())
         return mappers.street(row)
 
     def delete_street(self, sid: str) -> bool:
@@ -1143,7 +1193,6 @@ class DbStore:
             return False
         self._session.delete(row)
         self._session.flush()
-        mappers.set_street_code_map(self._street_code_map())
         return True
 
     def get_geo_config(self, city_id: str) -> dto.GeoConfig:

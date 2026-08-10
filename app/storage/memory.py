@@ -7,7 +7,8 @@ from fastapi import HTTPException
 
 from app import config, store
 from app.address import DEFAULT_ADDRESS_SCHEMA, DEFAULT_CHECKLIST_ITEMS, build_address
-from app.enums import HistoryType, ObjectStatus
+from app.domain_rules import effective_prescription_status
+from app.enums import AccountStatus, HistoryType, ObjectStatus
 from app.models import (
     ChecklistTemplateItem,
     ChecklistTemplateManageItem,
@@ -200,6 +201,11 @@ class MemoryStore:
         data = patch.model_dump(exclude_none=True)
         for k, v in data.items():
             setattr(obj, k, v)
+        # assignedUrbanistId: явный null = снять override (exclude_none его глотает).
+        if "assignedUrbanistId" in patch.model_fields_set:
+            obj.assignedUrbanistId = patch.assignedUrbanistId
+            responsible = self.find_user_by_id(obj.assignedUrbanistId) if obj.assignedUrbanistId else None
+            obj.assignedUrbanistName = responsible.name if responsible else None
         obj.updatedAt = config.today_str()
         htype = HistoryType.status_changed if "status" in data else HistoryType.card_updated
         self.append_history(HistoryEvent(
@@ -286,19 +292,35 @@ class MemoryStore:
         store.PRESCRIPTIONS.append(pr)
         return pr
 
-    def list_prescriptions(self) -> list[Prescription]:
-        return store.PRESCRIPTIONS
+    def _overdue(self, p: Prescription) -> Prescription:
+        # На чтении: open + прошедший дедлайн → overdue (не мутируя хранимый объект).
+        eff = effective_prescription_status(p.status, p.deadline, config.today_str())
+        return p if eff == p.status else p.model_copy(update={"status": eff})
 
-    def find_prescription(self, pid: str) -> Prescription | None:
+    def _find_stored_prescription(self, pid: str) -> Prescription | None:
         return next((p for p in store.PRESCRIPTIONS if p.id == pid), None)
 
+    def list_prescriptions(self) -> list[Prescription]:
+        return [self._overdue(p) for p in store.PRESCRIPTIONS]
+
+    def find_prescription(self, pid: str) -> Prescription | None:
+        p = self._find_stored_prescription(pid)
+        return self._overdue(p) if p is not None else None
+
     def patch_prescription(self, pid: str, data: dict) -> Prescription | None:
-        pr = self.find_prescription(pid)
+        pr = self._find_stored_prescription(pid)
         if pr is None:
             return None
         for k, v in data.items():
             setattr(pr, k, v)
-        return pr
+        return self._overdue(pr)
+
+    def mark_prescription_sent(self, pid: str, to: str | None) -> str | None:
+        # Демо: колонок sent_at/sent_to нет в in-memory DTO — возвращаем момент
+        # выдачи для ответа, без персистенции (паритет поведения с DbStore).
+        if self._find_stored_prescription(pid) is None:
+            return None
+        return config.now_iso()
 
     def list_users(self) -> list[User]:
         from app.enums import Role
@@ -309,10 +331,6 @@ class MemoryStore:
 
     def find_user_by_login(self, login: str) -> User | None:
         return next((u for u in store.USERS if (u.login or "").lower() == login.lower()), None)
-
-    def find_region_admin(self) -> User | None:
-        from app.enums import Role
-        return next((u for u in store.USERS if u.role == Role.region_admin), None)
 
     def authenticate_lookup(self, email_or_login: str) -> tuple[User | None, str | None]:
         key = email_or_login.strip().lower()
@@ -390,8 +408,10 @@ class MemoryStore:
             user.status = body.status
         if body.microdistrictIds is not None:
             user.microdistrictIds = body.microdistrictIds
+        if body.streetIds is not None:
+            user.streetIds = body.streetIds
         if body.resetPassword:
-            user.status = "active"
+            user.status = AccountStatus.active
             plain = random_temp_password()
             self._password_hashes[user.id] = hash_password(plain)
             creds = Credentials(login=user.login or "", tempPassword=plain)
@@ -421,10 +441,14 @@ class MemoryStore:
     def find_owner(self, wid: str) -> Owner | None:
         return next((o for o in store.OWNERS if o.id == wid), None)
 
-    def create_owner(self, body: CreateOwnerRequest) -> Owner:
+    def create_owner(self, body: CreateOwnerRequest) -> tuple[Owner, Credentials | None]:
         from fastapi import HTTPException
         from app.enums import Role
+        from app.passwords import hash_password
+        from app.user_helpers import login_for
 
+        creds: Credentials | None = None
+        data = body.model_dump()
         if body.ownerUserId:
             user = self.find_user_by_id(body.ownerUserId)
             if user is None or user.role != Role.owner:
@@ -435,9 +459,23 @@ class MemoryStore:
                         "code": "invalid_owner_user",
                     },
                 )
-        owner = Owner(id=store.next_id("w"), **body.model_dump())
+        else:
+            # Логин владельца обязателен — авто-создаём аккаунт role=owner (temp-пароль).
+            ucode = store.next_id("u")
+            login = login_for(body.name)
+            plain = random_temp_password()
+            account = User(
+                id=ucode, name=body.name.strip(), role=Role.owner, position="Владелец бизнеса",
+                login=login, email=body.email, status=AccountStatus.active,
+                createdAt=config.today_str(), regionId=self._region_id,
+            )
+            store.USERS.append(account)
+            self._password_hashes[ucode] = hash_password(plain)
+            data["ownerUserId"] = ucode
+            creds = Credentials(login=login, tempPassword=plain)
+        owner = Owner(id=store.next_id("w"), **data)
         store.OWNERS.append(owner)
-        return owner
+        return owner, creds
 
     def update_owner(self, wid: str, body: CreateOwnerRequest) -> Owner | None:
         from fastapi import HTTPException
@@ -515,7 +553,20 @@ class MemoryStore:
         return store.VERSIONS
 
     def inspection_trend(self) -> list[TrendPoint]:
-        return store.INSPECTION_TREND
+        from datetime import date as _date
+
+        from app.domain_rules import inspection_trend_counts
+
+        dates = []
+        for i in store.INSPECTIONS:
+            try:
+                dates.append(_date.fromisoformat(i.date[:10]))
+            except (ValueError, TypeError):
+                continue
+        return [
+            TrendPoint(month=label, value=value)
+            for label, value in inspection_trend_counts(dates, config.today_date())
+        ]
 
     def list_checklist_template(self, *, visible_only: bool = True) -> list[ChecklistTemplateItem]:
         region_id = self._region_id or "uralsk"

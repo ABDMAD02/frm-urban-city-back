@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import logging
 import mimetypes
 import re
 import uuid
@@ -17,6 +18,8 @@ from botocore.client import BaseClient
 from botocore.config import Config
 
 from app import config
+
+logger = logging.getLogger(__name__)
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -140,8 +143,9 @@ def resolve_readable_url(stored: str | None, *, expires_in: int | None = None) -
             return f"{pub}/{key}"
         try:
             return generate_presigned_get(key, expires_in=expires_in)
-        except Exception:
+        except Exception as exc:
             # Don't break listing if signing fails — return stored value
+            logger.warning("presign failed key=%s: %s: %s", key, type(exc).__name__, exc)
             return s
 
     # Already a bare key without R2 configured (memory/tests)

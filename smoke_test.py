@@ -324,7 +324,7 @@ biz1 = c.post(
     },
     headers=admin_h,
 )
-check("POST /owners with ownerUserId → 201", biz1.status_code == 201 and biz1.json().get("ownerUserId") == own_uid)
+check("POST /owners with ownerUserId → 201", biz1.status_code == 201 and biz1.json()["owner"].get("ownerUserId") == own_uid)
 biz2 = c.post(
     f"{B}/owners",
     json={
@@ -354,7 +354,7 @@ check("POST /owners ownerUserId=urbanist → 422", bad_link.status_code == 422)
 
 # PATCH без ownerUserId не должен затирать связь
 patch_keep = c.patch(
-    f"{B}/owners/{biz1.json()['id']}",
+    f"{B}/owners/{biz1.json()['owner']['id']}",
     headers=admin_h,
     json={"name": "ТОО Альфа (правка)", "legalForm": "ТОО", "phone": "+77001110001"},
 )

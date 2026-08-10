@@ -20,11 +20,13 @@ from sqlalchemy import (
     Double,
     Enum as SAEnum,
     ForeignKey,
+    Index,
     Integer,
     Text,
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -169,6 +171,12 @@ class Owner(Base):
         CheckConstraint(
             r"email IS NULL OR email ~* '^[^@\s]+@[^@\s]+\.[^@\s]+$'", name="email_format"
         ),
+        # БИН уникален в пределах города; партиальный — bin NULL для физлиц без ИИН.
+        # Дублирует индекс из миграции 0006, чтобы create_all (демо-схема) тоже его создавал.
+        Index(
+            "uq_owner_region_bin", "region_id", "bin",
+            unique=True, postgresql_where=text("bin IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -213,10 +221,10 @@ class Street(Base):
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     district_id: Mapped[Optional[str]] = mapped_column(
-        Text, ForeignKey("district.id", ondelete="SET NULL")
+        Text, ForeignKey("district.id", ondelete="SET NULL"), index=True
     )
     microdistrict_id: Mapped[Optional[str]] = mapped_column(
-        Text, ForeignKey("microdistrict.id", ondelete="SET NULL")
+        Text, ForeignKey("microdistrict.id", ondelete="SET NULL"), index=True
     )
 
 
@@ -259,7 +267,7 @@ class AppUser(Base):
     )
     # Legacy 1:1 link; preferred link is Owner.owner_user_id (1 account → many businesses).
     owner_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        Uuid, ForeignKey("owner.id", ondelete="SET NULL")
+        Uuid, ForeignKey("owner.id", ondelete="SET NULL"), index=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -268,6 +276,9 @@ class AppUser(Base):
 
     owner: Mapped[Optional[Owner]] = relationship(foreign_keys=[owner_id])
     microdistricts: Mapped[list[UserMicrodistrict]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    streets: Mapped[list[UserStreet]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -286,6 +297,20 @@ class UserMicrodistrict(Base):
     )
 
     user: Mapped[AppUser] = relationship(back_populates="microdistricts")
+
+
+# ── Закрепление сотрудников за улицами (N:M) — зоны по улицам ──────
+class UserStreet(Base):
+    __tablename__ = "user_street"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("app_user.id", ondelete="CASCADE"), primary_key=True
+    )
+    street_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("street.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+
+    user: Mapped[AppUser] = relationship(back_populates="streets")
 
 
 # ── Объекты города (корневой агрегат) ─────────────────────────────
@@ -315,7 +340,12 @@ class CityObject(Base):
     )
     street: Mapped[Optional[str]] = mapped_column(Text)
     street_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        Uuid, ForeignKey("street.id", ondelete="SET NULL")
+        Uuid, ForeignKey("street.id", ondelete="SET NULL"), index=True
+    )
+    # Явное переопределение ответственного (override). NULL = «по зоне».
+    # SET NULL: при удалении урбаниста объект возвращается в зону, не теряется (BR-3).
+    assigned_urbanist_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("app_user.id", ondelete="SET NULL"), index=True
     )
     house: Mapped[Optional[str]] = mapped_column(Text)
     apartment: Mapped[Optional[str]] = mapped_column(Text)
@@ -336,6 +366,7 @@ class CityObject(Base):
 
     owner: Mapped[Optional["Owner"]] = relationship(foreign_keys=[owner_id])
     street_row: Mapped[Optional["Street"]] = relationship(foreign_keys=[street_id])
+    assigned_urbanist: Mapped[Optional["AppUser"]] = relationship(foreign_keys=[assigned_urbanist_id])
 
     __mapper_args__ = {"version_id_col": version}
 
@@ -350,7 +381,7 @@ class Inspection(Base):
         Uuid, ForeignKey("city_object.id", ondelete="CASCADE"), nullable=False
     )
     inspector_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        Uuid, ForeignKey("app_user.id", ondelete="SET NULL")
+        Uuid, ForeignKey("app_user.id", ondelete="SET NULL"), index=True
     )
     inspector: Mapped[str] = mapped_column(Text, nullable=False)  # имя-снимок
     date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -363,6 +394,7 @@ class Inspection(Base):
     checklist: Mapped[list[ChecklistItem]] = relationship(
         back_populates="inspection", cascade="all, delete-orphan"
     )
+    inspector_user: Mapped[Optional["AppUser"]] = relationship(foreign_keys=[inspector_id])
 
 
 # ── Пункты чек-листа проверки (под-агрегат) ───────────────────────

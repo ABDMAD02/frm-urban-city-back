@@ -61,7 +61,7 @@ def patch_prescription(pid: str, body: PrescriptionPatch, repo: StoreDep, user: 
 
 
 @router.post("/prescriptions/{pid}/send", response_model=SendResult, summary="Отправить по email")
-def send_prescription(pid: str, body: SendPrescriptionRequest, repo: StoreDep, user: User = Depends(get_current_user)):
+def send_prescription(pid: str, body: SendPrescriptionRequest, repo: StoreDep, user: User = Depends(require_operator)):
     pr = repo.find_prescription(pid)
     if pr is None:
         raise HTTPException(404, "Предписание не найдено")
@@ -69,9 +69,14 @@ def send_prescription(pid: str, body: SendPrescriptionRequest, repo: StoreDep, u
     obj = repo.find_object(pr.objectId)
     owner = repo.find_owner(obj.ownerId) if obj else None
     to = body.email or (owner.email if owner else None)
+    # Фиксируем выдачу уведомления (sent_at/sent_to). Реальной e-mail/Telegram
+    # доставки пока нет — уведомление бумажное, выдаётся лично; здесь честно
+    # фиксируется момент и адресат выдачи, а не факт электронной отправки.
+    sent_at = repo.mark_prescription_sent(pid, to)
     repo.append_history(HistoryEvent(
         id="", objectId=pr.objectId, type=HistoryType.prescription_issued,
         actor=user.name, date=config.today_str(),
-        text=f"Предписание отправлено ответственному лицу{(' (' + to + ')') if to else ''}",
+        text=f"Зафиксирована выдача уведомления ответственному лицу{(' (' + to + ')') if to else ''}",
     ))
-    return SendResult(sent=True, sentAt=config.now_iso(), to=to)
+    # sent=True означает «выдача зафиксирована», не «письмо доставлено».
+    return SendResult(sent=True, sentAt=sent_at or config.now_iso(), to=to)

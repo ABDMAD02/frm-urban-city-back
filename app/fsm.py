@@ -19,20 +19,3 @@ def can_transition(frm: S, to: S) -> bool:
     if frm == to:
         return True
     return to in ALLOWED_TRANSITIONS[frm]
-
-
-# Чек-лист дизайн-кода (12 пунктов) — зеркало CHECKLIST_TEMPLATE.
-CHECKLIST_TEMPLATE = [
-    {"key": "facade", "label": "Фасад"},
-    {"key": "signboard", "label": "Вывеска"},
-    {"key": "ads", "label": "Рекламные конструкции"},
-    {"key": "banners", "label": "Баннеры"},
-    {"key": "led", "label": "LED-экраны"},
-    {"key": "entrance", "label": "Входная группа"},
-    {"key": "arch_style", "label": "Архитектурный стиль"},
-    {"key": "lighting", "label": "Освещение"},
-    {"key": "improvement", "label": "Благоустройство"},
-    {"key": "greenery", "label": "Озеленение"},
-    {"key": "design_code", "label": "Соответствие дизайн-коду"},
-    {"key": "cleanliness", "label": "Чистота прилегающей территории"},
-]

@@ -27,6 +27,7 @@ class User(BaseModel):
     role: Role
     position: str
     microdistrictIds: list[str] | None = None
+    streetIds: list[str] | None = None        # зоны-улицы урбаниста
     ownerObjectIds: list[str] | None = None
     login: str | None = None
     status: AccountStatus | None = None
@@ -68,6 +69,7 @@ class Inspection(BaseModel):
     id: str
     objectId: str
     inspector: str
+    inspectorId: str | None = None   # код сотрудника, проводившего проверку
     date: str
     result: InspectionResult
     checklist: list[ChecklistItem] = []
@@ -122,6 +124,8 @@ class CityObject(BaseModel):
     ownerId: str
     status: ObjectStatus
     responsible: str
+    assignedUrbanistId: str | None = None      # явное переопределение ответственного (override)
+    assignedUrbanistName: str | None = None    # денорм. имя для отображения (собирает сервер)
     createdAt: str
     updatedAt: str
 
@@ -176,6 +180,26 @@ class BulkDeleteObjectsResult(BaseModel):
     deleted: int
 
 
+class BulkAssignObjectsRequest(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+    assignedUrbanistId: str | None = None   # null = снять override со всех выбранных
+
+
+class BulkAssignObjectsResult(BaseModel):
+    assigned: int
+
+
+class CoverageUrbanist(BaseModel):
+    urbanistId: str
+    name: str
+    objects: int          # объекты в скоупе (зона + явные назначения)
+
+
+class CoverageSummary(BaseModel):
+    urbanists: list[CoverageUrbanist] = Field(default_factory=list)
+    unassigned: int       # нераспределённые объекты региона (BR-3)
+
+
 class ObjectPatch(BaseModel):
     name: str | None = None
     type: str | None = None
@@ -190,6 +214,7 @@ class ObjectPatch(BaseModel):
     streetId: str | None = None
     house: str | None = None
     apartment: str | None = None
+    assignedUrbanistId: str | None = None   # null = снять override (вернуть в зону)
 
 
 class UpdateObjectRequest(BaseModel):
@@ -221,6 +246,7 @@ class CreateUserRequest(BaseModel):
     role: Role  # ожидается urbanist|owner
     position: str
     microdistrictIds: list[str] | None = None
+    streetIds: list[str] | None = None
     # Для role=owner: id карточки собственника. Если не передан — создаётся автоматически.
     ownerId: str | None = None
 
@@ -235,10 +261,16 @@ class CreateUserResponse(BaseModel):
     credentials: Credentials
 
 
+class CreateOwnerResponse(BaseModel):
+    owner: Owner
+    credentials: Credentials | None = None   # логин владельца, авто-созданный при заведении бизнеса
+
+
 class UpdateUserRequest(BaseModel):
     status: AccountStatus | None = None
     resetPassword: bool | None = None
     microdistrictIds: list[str] | None = None
+    streetIds: list[str] | None = None
 
 
 class UpdateUserResponse(BaseModel):
