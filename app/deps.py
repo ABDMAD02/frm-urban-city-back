@@ -57,7 +57,8 @@ def get_store(
                 )
                 _memory.set_region(None)
         else:
-            _memory.set_region("uralsk")
+            # No token → empty scope; protected routes raise 401 via get_current_user.
+            _memory.set_region(None)
         yield _memory
         return
 

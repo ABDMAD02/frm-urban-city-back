@@ -6,7 +6,9 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from .. import config
 from ..deps import StoreDep
+from ..domain_rules import effective_prescription_status
 from ..security import accessible_object_ids, get_current_user, require_operator, require_region_admin
 from ..models import (
     TrendPoint, KpiSummary, DistrictStat, User, CityObject,
@@ -47,10 +49,12 @@ def summary(repo: StoreDep, user: User = Depends(get_current_user)):
     inspections = sum(1 for i in repo.list_inspections() if i.objectId in allowed)
     violations = sum(1 for o in objs if o.status in _VIOLATION)
     compliant = sum(1 for o in objs if o.status == ObjectStatus.compliant)
+    today = config.today_str()
     overdue = sum(
         1
         for p in repo.list_prescriptions()
-        if p.status == PrescriptionStatus.overdue and p.objectId in allowed
+        if p.objectId in allowed
+        and effective_prescription_status(p.status, p.deadline, today) == PrescriptionStatus.overdue
     )
     fixed = sum(1 for o in objs if o.status == ObjectStatus.violation_fixed)
     inspected = sum(1 for o in objs if o.status not in (ObjectStatus.new, ObjectStatus.not_inspected))

@@ -441,12 +441,28 @@ class MemoryStore:
     def find_owner(self, wid: str) -> Owner | None:
         return next((o for o in store.OWNERS if o.id == wid), None)
 
+    def _check_bin_duplicate(self, bin_value: str | None, exclude_id: str | None = None) -> None:
+        from fastapi import HTTPException
+
+        if not bin_value:
+            return
+        for o in store.OWNERS:
+            if o.bin != bin_value:
+                continue
+            if exclude_id is not None and o.id == exclude_id:
+                continue
+            raise HTTPException(
+                409,
+                detail={"message": "Компания с таким БИН/ИИН уже зарегистрирована", "code": "bin_duplicate"},
+            )
+
     def create_owner(self, body: CreateOwnerRequest) -> tuple[Owner, Credentials | None]:
         from fastapi import HTTPException
         from app.enums import Role
         from app.passwords import hash_password
         from app.user_helpers import login_for
 
+        self._check_bin_duplicate(body.bin)
         creds: Credentials | None = None
         data = body.model_dump()
         if body.ownerUserId:
@@ -484,6 +500,7 @@ class MemoryStore:
         owner = self.find_owner(wid)
         if owner is None:
             return None
+        self._check_bin_duplicate(body.bin, exclude_id=wid)
         data = body.model_dump()
         # Preserve existing link unless caller explicitly sends ownerUserId
         # (including null to unlink).

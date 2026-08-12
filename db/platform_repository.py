@@ -25,7 +25,6 @@ from app.platform_models import (
     RegionAdminAccount,
     ReissueAdminRequest,
 )
-from app.store import TYPES
 from app.user_helpers import login_for, random_temp_password, temp_password
 from app.passwords import hash_password
 from db.codes import uuid_for_code
@@ -155,7 +154,7 @@ class PlatformStore:
     def _seed_region_refs(self, region_id: str) -> None:
         """Новый регион начинает с пустым списком типов объектов.
 
-        Типы подтягиваются из глобального каталога /object-type-catalog (app.store.TYPES),
+        Типы подтягиваются из глобального каталога /object-type-catalog,
         где admin выбирает нужные и добавляет через /object-types/manage.
         Копировать чужой набор (Уральск) нельзя — у каждого города свой контекст.
         """
