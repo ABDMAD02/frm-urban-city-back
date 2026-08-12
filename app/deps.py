@@ -44,17 +44,18 @@ def get_store(
                         _memory.set_region(None)
                     elif user.regionId:
                         _memory.set_region(user.regionId)
-                    else:
-                        _memory.set_region("uralsk")
+                    # no regionId and not superadmin → leave region=None (empty scope)
                 else:
-                    _memory.set_region("uralsk")
+                    # Valid JWT but user not found → don't leak cross-tenant data.
+                    # The route's get_current_user will raise 401 on find_user_by_id.
+                    _memory.set_region(None)
             except Exception as exc:
                 logger.warning(
-                    "JWT resolve failed (memory store), falling back to region 'uralsk': %s: %s",
+                    "JWT resolve failed (memory store): %s: %s",
                     type(exc).__name__,
                     exc,
                 )
-                _memory.set_region("uralsk")
+                _memory.set_region(None)
         else:
             _memory.set_region("uralsk")
         yield _memory
@@ -62,7 +63,7 @@ def get_store(
 
     get_engine()
     session = SessionLocal()
-    repo = DbStore(session, region_id="uralsk")
+    repo = DbStore(session, region_id=None)
     # Tenant scope from JWT when present
     if creds is not None:
         try:
@@ -77,17 +78,15 @@ def get_store(
                     repo.set_region(None)
                 elif user.regionId:
                     repo.set_region(user.regionId)
-                else:
-                    repo.set_region("uralsk")
-            else:
-                repo.set_region("uralsk")
+                # no regionId and not superadmin → leave region=None (empty scope)
+            # unknown user → region stays None; route raises 401 via find_user_by_id
         except Exception as exc:
             logger.warning(
-                "JWT resolve failed (db store), falling back to region 'uralsk': %s: %s",
+                "JWT resolve failed (db store): %s: %s",
                 type(exc).__name__,
                 exc,
             )
-            repo.set_region("uralsk")
+            repo.set_region(None)
     try:
         yield repo
         repo.commit()

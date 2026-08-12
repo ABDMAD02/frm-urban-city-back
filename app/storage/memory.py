@@ -552,13 +552,15 @@ class MemoryStore:
     def list_versions(self):
         return store.VERSIONS
 
-    def inspection_trend(self) -> list[TrendPoint]:
+    def inspection_trend(self, object_ids: set[str] | None = None) -> list[TrendPoint]:
         from datetime import date as _date
 
         from app.domain_rules import inspection_trend_counts
 
         dates = []
         for i in store.INSPECTIONS:
+            if object_ids is not None and i.objectId not in object_ids:
+                continue
             try:
                 dates.append(_date.fromisoformat(i.date[:10]))
             except (ValueError, TypeError):

@@ -17,11 +17,33 @@ from ..models import (
     Owner, CreateOwnerRequest, CreateOwnerResponse, District, DistrictCreate, Microdistrict,
     MicrodistrictCreate, ObjectTypeCreate, Photo, HistoryEvent, ObjectVersion, User,
     ChecklistTemplateItem, ChecklistTemplateManageRequest, Street, StreetCreate, StreetPatch,
-    GeoConfig, GeoConfigPatch, CurrentCity,
+    GeoConfig, GeoConfigPatch, CurrentCity, DesignCodeCatalogItem, ObjectTypeCatalogItem,
 )
 from ..enums import PhotoKind
 
 router = APIRouter(tags=["Справочники"])
+
+
+@router.get(
+    "/design-code-catalog",
+    response_model=list[DesignCodeCatalogItem],
+    summary="Каталог пунктов дизайн-кода РК (глобальный)",
+)
+def list_design_code_catalog(user: User = Depends(get_current_user)):
+    from app.store import DESIGN_CODE_CATALOG
+
+    return [DesignCodeCatalogItem(**item) for item in DESIGN_CODE_CATALOG]
+
+
+@router.get(
+    "/object-type-catalog",
+    response_model=list[ObjectTypeCatalogItem],
+    summary="Каталог типовых типов объектов РК (глобальный)",
+)
+def list_object_type_catalog(user: User = Depends(get_current_user)):
+    from app.store import OBJECT_TYPE_CATALOG
+
+    return [ObjectTypeCatalogItem(**item) for item in OBJECT_TYPE_CATALOG]
 
 
 @router.get("/owners", response_model=list[Owner], summary="Собственники")

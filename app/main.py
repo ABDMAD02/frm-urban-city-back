@@ -174,6 +174,11 @@ async def database_integrity_error_handler(request: Request, exc: IntegrityError
     elif "email_format" in raw:
         message, code = "Некорректный email", "invalid_email"
     elif "unique" in raw.lower() or "duplicate" in raw.lower():
+        if "owner" in raw.lower() and "bin" in raw.lower():
+            return JSONResponse(
+                status_code=409,
+                content={"message": "Компания с таким БИН/ИИН уже зарегистрирована", "code": "bin_duplicate"},
+            )
         message, code = "Запись с такими данными уже существует", "duplicate"
     else:
         message, code = "Нарушение ограничения данных", "integrity_error"

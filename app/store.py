@@ -206,3 +206,69 @@ def next_id(prefix: str) -> str:
 
 def find_object(oid: str) -> CityObject | None:
     return next((o for o in OBJECTS if o.id == oid), None)
+
+
+# ── Глобальные каталоги РК (нейтральный сид) ─────────────────────
+
+DESIGN_CODE_CATALOG = [
+    # Фасады
+    {"key": "dc-facade-color", "titleRu": "Цвет фасада", "titleKz": "Қасбет түсі", "category": "Фасад"},
+    {"key": "dc-facade-material", "titleRu": "Материал фасада", "titleKz": "Қасбет материалы", "category": "Фасад"},
+    {"key": "dc-facade-windows", "titleRu": "Остекление и оконные проёмы", "titleKz": "Терезе жүйесі", "category": "Фасад"},
+    {"key": "dc-facade-cladding", "titleRu": "Облицовка и декоративные элементы", "titleKz": "Қаптама элементтер", "category": "Фасад"},
+    {"key": "dc-facade-entrance", "titleRu": "Входные группы и двери", "titleKz": "Кіреберіс топтар", "category": "Фасад"},
+    # Вывески и реклама
+    {"key": "dc-sign-placement", "titleRu": "Размещение вывески", "titleKz": "Жарнамалық белгі орналасуы", "category": "Вывески"},
+    {"key": "dc-sign-size", "titleRu": "Размер и пропорции вывески", "titleKz": "Жарнама өлшемдері", "category": "Вывески"},
+    {"key": "dc-sign-illumination", "titleRu": "Подсветка вывески", "titleKz": "Жарнама жарықтандыруы", "category": "Вывески"},
+    {"key": "dc-sign-content", "titleRu": "Содержание и язык вывески", "titleKz": "Жарнама мазмұны мен тілі", "category": "Вывески"},
+    {"key": "dc-advert-billboard", "titleRu": "Билборды и крупногабаритные конструкции", "titleKz": "Билбордтар", "category": "Вывески"},
+    # Благоустройство
+    {"key": "dc-landscape-greenery", "titleRu": "Озеленение и цветники", "titleKz": "Жасыл желек", "category": "Благоустройство"},
+    {"key": "dc-landscape-pavement", "titleRu": "Покрытие тротуаров и дорожек", "titleKz": "Жаяу жол жабыны", "category": "Благоустройство"},
+    {"key": "dc-landscape-lighting", "titleRu": "Уличное освещение", "titleKz": "Көше жарығы", "category": "Благоустройство"},
+    {"key": "dc-landscape-benches", "titleRu": "Малые архитектурные формы", "titleKz": "Кіші сәулет нысандары", "category": "Благоустройство"},
+    {"key": "dc-landscape-fencing", "titleRu": "Ограждения и заборы", "titleKz": "Қоршаулар", "category": "Благоустройство"},
+    # Территория
+    {"key": "dc-territory-cleanliness", "titleRu": "Чистота и порядок на территории", "titleKz": "Аумақ тазалығы", "category": "Территория"},
+    {"key": "dc-territory-parking", "titleRu": "Парковочная зона", "titleKz": "Автотұрақ", "category": "Территория"},
+    {"key": "dc-territory-containers", "titleRu": "Контейнерные площадки (ТБО)", "titleKz": "Қалдық алаңдары", "category": "Территория"},
+    {"key": "dc-territory-utilities", "titleRu": "Инженерные коммуникации снаружи", "titleKz": "Инженерлік желілер", "category": "Территория"},
+    # Доступная среда
+    {"key": "dc-access-ramp", "titleRu": "Пандус и поручни", "titleKz": "Пандус және тұтқалар", "category": "Доступная среда"},
+    {"key": "dc-access-tactile", "titleRu": "Тактильная плитка", "titleKz": "Тактильді тақта", "category": "Доступная среда"},
+    {"key": "dc-access-parking", "titleRu": "Место для инвалидных колясок", "titleKz": "Мүгедек орны", "category": "Доступная среда"},
+]
+
+OBJECT_TYPE_CATALOG = [
+    {"name": "Магазин", "category": "Торговля"},
+    {"name": "Кафе", "category": "Общепит"},
+    {"name": "Ресторан", "category": "Общепит"},
+    {"name": "Торговый центр", "category": "Торговля"},
+    {"name": "Супермаркет", "category": "Торговля"},
+    {"name": "Рынок", "category": "Торговля"},
+    {"name": "Аптека", "category": "Медицина"},
+    {"name": "Поликлиника", "category": "Медицина"},
+    {"name": "Больница", "category": "Медицина"},
+    {"name": "Банк", "category": "Финансы"},
+    {"name": "Обменный пункт", "category": "Финансы"},
+    {"name": "МФЦ (ЦОН)", "category": "Госучреждения"},
+    {"name": "Административное здание", "category": "Госучреждения"},
+    {"name": "Школа", "category": "Образование"},
+    {"name": "Детский сад", "category": "Образование"},
+    {"name": "Колледж / ВУЗ", "category": "Образование"},
+    {"name": "Жилой дом", "category": "Жильё"},
+    {"name": "Рекламная конструкция", "category": "Реклама"},
+    {"name": "Билборд", "category": "Реклама"},
+    {"name": "Светодиодный экран", "category": "Реклама"},
+    {"name": "Гостиница", "category": "Гостиничный бизнес"},
+    {"name": "Бизнес-центр", "category": "Офисы"},
+    {"name": "Остановка общественного транспорта", "category": "Инфраструктура"},
+    {"name": "Автостоянка", "category": "Инфраструктура"},
+    {"name": "Автозаправочная станция", "category": "Инфраструктура"},
+    {"name": "Парк / сквер", "category": "Благоустройство"},
+    {"name": "Спортивная площадка", "category": "Благоустройство"},
+    {"name": "Детская площадка", "category": "Благоустройство"},
+    {"name": "Производственное здание", "category": "Промышленность"},
+    {"name": "Склад", "category": "Промышленность"},
+]

@@ -354,6 +354,44 @@ class DistrictStat(BaseModel):
     compliant: int
 
 
+# ── Глобальные каталоги РК ────────────────────────────────────────
+class DesignCodeCatalogItem(BaseModel):
+    key: str
+    titleRu: str
+    titleKz: str = ""
+    category: str = ""
+
+
+class ObjectTypeCatalogItem(BaseModel):
+    name: str
+    category: str = ""
+
+
+# ── Аналитика (новые ручки) ───────────────────────────────────────
+class UnassignedObject(BaseModel):
+    objectId: str
+    name: str
+    reason: str   # "not_assigned" | "not_inspected"
+
+
+class UrbanistActivityItem(BaseModel):
+    urbanistId: str
+    name: str
+    inspections: int
+    lastAt: str | None = None   # ISO-date последней проверки
+
+
+class UrbanistActivityResponse(BaseModel):
+    dataReady: bool
+    period: dict[str, str]
+    items: list[UrbanistActivityItem]
+
+
+class MyOutputResponse(BaseModel):
+    inspections: int
+    period: dict[str, str]
+
+
 # ── Прочее ────────────────────────────────────────────────────────
 class Notification(BaseModel):
     id: str

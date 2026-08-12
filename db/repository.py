@@ -655,7 +655,7 @@ class DbStore:
                 (func.lower(m.AppUser.login) == login)
                 | (func.lower(m.AppUser.email) == key)
             )
-            .options(selectinload(m.AppUser.microdistricts))
+            .options(selectinload(m.AppUser.microdistricts), selectinload(m.AppUser.streets))
         )
         if row is None:
             return None, None
@@ -864,10 +864,29 @@ class DbStore:
         self._ensure_same_region(row.region_id)
         return self._owner_dto(row)
 
+    def _check_bin_duplicate(self, bin_value: str | None, exclude_uid=None) -> None:
+        """Raise 409 bin_duplicate if BIN already exists in the region."""
+        from fastapi import HTTPException
+
+        if not bin_value:
+            return
+        q = select(m.Owner).where(m.Owner.bin == bin_value)
+        if self._region_id:
+            q = q.where(m.Owner.region_id == self._region_id)
+        if exclude_uid is not None:
+            q = q.where(m.Owner.id != exclude_uid)
+        existing = self._session.scalar(q)
+        if existing is not None:
+            raise HTTPException(
+                409,
+                detail={"message": "Компания с таким БИН/ИИН уже зарегистрирована", "code": "bin_duplicate"},
+            )
+
     def create_owner(self, body: CreateOwnerRequest) -> tuple[Owner, Credentials | None]:
         from app.passwords import hash_password
 
         region_id = self._region_id or "uralsk"
+        self._check_bin_duplicate(body.bin)
         creds: Credentials | None = None
         if body.ownerUserId:
             account_uid = self._resolve_owner_account(body.ownerUserId, region_id=region_id)
@@ -914,6 +933,7 @@ class DbStore:
         if row is None:
             return None
         self._ensure_same_region(row.region_id)
+        self._check_bin_duplicate(body.bin, exclude_uid=uid)
         region_id = row.region_id or self._region_id or "uralsk"
         row.name = body.name
         row.legal_form = body.legalForm
@@ -1042,16 +1062,25 @@ class DbStore:
         rows = self._session.scalars(q).all()
         return [mappers.object_version(r, object_code=self._object_code(r.object_id)) for r in rows]
 
-    def inspection_trend(self) -> list[TrendPoint]:
+    def inspection_trend(self, object_ids: set[str] | None = None) -> list[TrendPoint]:
         from app import config
         from app.domain_rules import inspection_trend_counts
 
-        q = select(m.Inspection.date)
+        q = select(m.Inspection.date, m.Inspection.object_id)
         if self._region_id:
             q = q.join(m.CityObject, m.Inspection.object_id == m.CityObject.id).where(
                 m.CityObject.region_id == self._region_id
             )
-        dates = list(self._session.scalars(q).all())
+        rows = list(self._session.execute(q).all())
+        if object_ids is not None:
+            # Resolve public codes → UUIDs for comparison (object_ids may be public codes).
+            allowed_uuids: set = set()
+            for oid in object_ids:
+                resolved = self._resolve_uuid(m.CityObject, oid)
+                if resolved:
+                    allowed_uuids.add(resolved)
+            rows = [r for r in rows if r[1] in allowed_uuids]
+        dates = [r[0] for r in rows]
         return [
             TrendPoint(month=label, value=value)
             for label, value in inspection_trend_counts(dates, config.today_date())

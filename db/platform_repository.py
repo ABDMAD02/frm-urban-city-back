@@ -153,16 +153,12 @@ class PlatformStore:
         )
 
     def _seed_region_refs(self, region_id: str) -> None:
-        """Типы объектов для нового региона. Географию (районы/МД/улицы) не копируем — пустая."""
-        for t_name, t_cat in TYPES:
-            self._session.add(
-                m.ObjectType(
-                    id=uuid_for_code(f"{region_id}:type:{t_name}"),
-                    region_id=region_id,
-                    name=t_name,
-                    category=t_cat,
-                )
-            )
+        """Новый регион начинает с пустым списком типов объектов.
+
+        Типы подтягиваются из глобального каталога /object-type-catalog (app.store.TYPES),
+        где admin выбирает нужные и добавляет через /object-types/manage.
+        Копировать чужой набор (Уральск) нельзя — у каждого города свой контекст.
+        """
         self._session.flush()
 
     def _seed_checklist_template(self, region_id: str) -> None:
