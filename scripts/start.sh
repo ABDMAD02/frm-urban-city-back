@@ -26,16 +26,27 @@ PY
 ensure_schema() {
   python - <<'PY'
 import os
+
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, text
+
 from db.base import get_engine
 
-HEAD_REVISION = "0005"
 _IS_PROD = os.getenv("ENV", "development") == "production"
 _ALLOW_RESET = os.getenv("ALLOW_DB_RESET", "0").lower() in ("1", "true", "yes")
+
+# Container cwd is /app; alembic.ini is at repo root.
+HEAD_REVISION = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
+
 engine = get_engine()
 insp = inspect(engine)
 tables = set(insp.get_table_names())
-need_tables = {"owner", "city_object", "app_user", "district", "object_type", "region", "subscription", "plan"}
+# subscription/plan removed in 0008; user_street added in 0007.
+need_tables = {
+    "owner", "city_object", "app_user", "district", "object_type", "region",
+    "street", "user_street",
+}
 missing_tables = sorted(need_tables - tables)
 
 # Migration 0002: public API ids live in ``code`` on these tables.
@@ -57,7 +68,8 @@ if "alembic_version" in tables:
 print(
     f"Schema check: tables={len(tables)} "
     f"missing_tables={missing_tables} missing_code={missing_code} "
-    f"missing_region={missing_region} alembic_version={alembic_version!r}"
+    f"missing_region={missing_region} alembic_version={alembic_version!r} "
+    f"head={HEAD_REVISION!r}"
 )
 
 if missing_tables or missing_code or missing_region:
@@ -77,8 +89,11 @@ if missing_tables or missing_code or missing_region:
     raise SystemExit(2)
 
 if alembic_version != HEAD_REVISION:
-    print(f"Alembic version {alembic_version!r} != head {HEAD_REVISION!r} — stamping head")
-    raise SystemExit(3)
+    # Never stamp forward: that skips DDL (e.g. user_street from 0007).
+    print(
+        f"Alembic version {alembic_version!r} != head {HEAD_REVISION!r} — need upgrade"
+    )
+    raise SystemExit(5)
 
 raise SystemExit(0)
 PY
@@ -103,8 +118,9 @@ if [ "${RUN_MIGRATIONS:-0}" = "1" ]; then
         alembic upgrade head
         ensure_schema
         ;;
-      3)
-        alembic stamp head
+      5)
+        echo "Re-running alembic upgrade head (behind head)..."
+        alembic upgrade head
         ensure_schema
         ;;
       4)
@@ -112,7 +128,7 @@ if [ "${RUN_MIGRATIONS:-0}" = "1" ]; then
         exit 1
         ;;
       *)
-        echo "Schema check failed with unexpected code"
+        echo "Schema check failed with unexpected code $schema_status"
         exit 1
         ;;
     esac
