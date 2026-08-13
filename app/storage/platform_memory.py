@@ -561,9 +561,22 @@ class MemoryPlatformStore:
         self.regions = [updated_region if r.id == region_id else r for r in self.regions]
         return merged
 
-    def import_region_geo(self, region_id: str, body: GeoImportRequest) -> GeoImportResponse:
+    def clear_region_geo(self, region_id: str) -> None:
+        """Стереть всю гео региона (districts/microdistricts/streets) — для replace-импорта."""
         if self.find_region(region_id) is None:
             raise LookupError("region_not_found")
+        mem = self._operational()
+        mem._streets[region_id] = []
+        mem._microdistricts[region_id] = []
+        mem._districts[region_id] = []
+
+    def import_region_geo(
+        self, region_id: str, body: GeoImportRequest, mode: str = "append"
+    ) -> GeoImportResponse:
+        if self.find_region(region_id) is None:
+            raise LookupError("region_not_found")
+        if mode == "replace":
+            self.clear_region_geo(region_id)
         added = GeoImportCounts()
         skipped = 0
         # Связи резолвим по имени (как в проде на БД); дедуп — по имени уровня.

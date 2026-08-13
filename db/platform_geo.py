@@ -6,7 +6,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from app.enums import PlatformAuditAction, RegionStatus
 from app.geo_catalog import catalog_by_id, catalog_city_summary
@@ -374,9 +374,22 @@ class PlatformGeoMixin:
             raise LookupError("catalog_not_found")
         self._seed_geo_from_catalog_data(region_id, city)
 
-    def import_region_geo(self, region_id: str, body: GeoImportRequest) -> GeoImportResponse:
+    def clear_region_geo(self, region_id: str) -> None:
+        """Стереть всю гео региона — для replace-импорта (streets→mkr→districts)."""
         if self._region_row(region_id) is None:
             raise LookupError("region_not_found")
+        self._session.execute(delete(m.Street).where(m.Street.region_id == region_id))
+        self._session.execute(delete(m.Microdistrict).where(m.Microdistrict.region_id == region_id))
+        self._session.execute(delete(m.District).where(m.District.region_id == region_id))
+        self._session.flush()
+
+    def import_region_geo(
+        self, region_id: str, body: GeoImportRequest, mode: str = "append"
+    ) -> GeoImportResponse:
+        if self._region_row(region_id) is None:
+            raise LookupError("region_not_found")
+        if mode == "replace":
+            self.clear_region_geo(region_id)
         added = GeoImportCounts()
         skipped = 0
         district_by_name = {d.name.lower(): d.id for d in self.list_region_districts(region_id)}
