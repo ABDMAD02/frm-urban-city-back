@@ -131,6 +131,7 @@ class ReissueAdminResponse(BaseModel):
 
 class GeoCatalogCitySummary(BaseModel):
     id: str
+    code: str | None = None
     name: str
     oblast: str | None = None
     districts: int = 0
