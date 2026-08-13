@@ -50,10 +50,16 @@ def test_two_users_get_distinct_passwords(client, region_admin):
 def test_provisioned_admin_password_is_random(client, superadmin):
     r = client.post(
         f"{API}/platform/regions",
-        json={"code": "testcity", "name": "Тестгород", "adminName": "Админ Тестов"},
+        json={
+            "code": "testcity",
+            "name": "Тестгород",
+            "adminName": "Админ Тестов",
+            "geo": {"source": "catalog", "cityCatalogId": "kz-aktau"},
+        },
         headers=superadmin,
     )
     assert r.status_code == 201, r.text
+    assert r.json()["region"]["status"] == "active"
     creds = r.json()["credentials"]
     ok = client.post(f"{API}/auth/v2/login", json={"email": creds["login"], "password": creds["tempPassword"]})
     assert ok.status_code == 200, ok.text

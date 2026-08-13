@@ -36,41 +36,67 @@ check("GET /auth/v2/me", me.status_code == 200 and me.json().get("role") == "pla
 regions = c.get("/api/v1/platform/regions", headers=H)
 check("GET /platform/regions", regions.status_code == 200 and len(regions.json()) >= 1)
 
-# Подписки/тарифы удалены — ручек /plans и /subscriptions больше нет.
-check("GET /platform/plans → 404", c.get("/api/v1/platform/plans", headers=H).status_code == 404)
-check("GET /platform/subscriptions → 404", c.get("/api/v1/platform/subscriptions", headers=H).status_code == 404)
+catalog = c.get("/api/v1/platform/geo-catalog/cities", headers=H)
+check("GET /platform/geo-catalog/cities", catalog.status_code == 200 and len(catalog.json()) >= 1)
 
-admins = c.get("/api/v1/platform/admin-users", headers=H)
-check("GET /platform/admin-users", admins.status_code == 200 and len(admins.json()) >= 1)
-
-ras = c.get("/api/v1/platform/region-admin-accounts", headers=H)
-check("GET /platform/region-admin-accounts", ras.status_code == 200 and len(ras.json()) >= 1)
-
+# catalog provision → active + geo
 prov = c.post(
     "/api/v1/platform/regions",
     headers=H,
     json={
-        "code": "astana",
-        "name": "Астана",
-        "timezone": "Asia/Almaty",
-        "locale": "ru",
-        "mapProvider": "2gis",
-        "adminName": "Ерлан Тестов",
+        "code": "aktau-test",
+        "name": "Актау (тест)",
+        "adminName": "Данияр Тестов",
+        "geo": {"source": "catalog", "cityCatalogId": "kz-aktau"},
     },
 )
-check("POST /platform/regions provision", prov.status_code == 201 and "credentials" in prov.json())
-check("  провижн НЕ возвращает subscription", "subscription" not in prov.json())
+check("POST /platform/regions catalog → active", prov.status_code == 201 and prov.json()["region"]["status"] == "active")
 if prov.status_code == 201:
-    check("  credentials login", bool(prov.json()["credentials"]["login"]))
     rid = prov.json()["region"]["id"]
-    st = c.patch(f"/api/v1/platform/regions/{rid}/status", headers=H, json={"status": "active"})
-    check("PATCH status → active", st.status_code == 200 and st.json()["status"] == "active")
-    re = c.post(
-        f"/api/v1/platform/regions/{rid}/admin-account",
+    geo = c.get(f"/api/v1/platform/regions/{rid}/districts", headers=H)
+    check("GET platform districts seeded", geo.status_code == 200 and len(geo.json()) >= 1)
+
+# manual provision → provisioning
+prov2 = c.post(
+    "/api/v1/platform/regions",
+    headers=H,
+    json={
+        "code": "manual-test",
+        "name": "Manual City",
+        "adminName": "Admin Manual",
+        "geo": {
+            "source": "manual",
+            "config": {
+                "hasDistricts": True,
+                "hasMicrodistricts": True,
+                "hasStreets": True,
+                "addressSchema": "microdistrict,street,house",
+            },
+        },
+    },
+)
+check("POST /platform/regions manual → provisioning", prov2.status_code == 201 and prov2.json()["region"]["status"] == "provisioning")
+if prov2.status_code == 201:
+    rid2 = prov2.json()["region"]["id"]
+    act_fail = c.post(f"/api/v1/platform/regions/{rid2}/activate", headers=H)
+    check("POST activate without geo → 422", act_fail.status_code == 422 and act_fail.json().get("code") == "geo_incomplete")
+    imp = c.post(
+        f"/api/v1/platform/regions/{rid2}/geo/import",
         headers=H,
-        json={"name": "Новый Админ"},
+        json={
+            "districts": [{"name": "Центр"}],
+            "microdistricts": [{"name": "мкр. 1", "districtName": "Центр"}],
+            "streets": [{"name": "ул. Абая", "districtName": "Центр"}],
+        },
     )
-    check("POST reissue admin", re.status_code == 201 and "credentials" in re.json())
+    check("POST geo/import", imp.status_code == 200 and imp.json()["added"]["districts"] == 1)
+    act_ok = c.post(f"/api/v1/platform/regions/{rid2}/activate", headers=H)
+    check("POST activate after geo → active", act_ok.status_code == 200 and act_ok.json()["status"] == "active")
+
+check("GET /platform/plans → 404", c.get("/api/v1/platform/plans", headers=H).status_code == 404)
+
+admins = c.get("/api/v1/platform/admin-users", headers=H)
+check("GET /platform/admin-users", admins.status_code == 200 and len(admins.json()) >= 1)
 
 audit = c.get("/api/v1/platform/audit", headers=H)
 check("GET /platform/audit", audit.status_code == 200 and len(audit.json()) >= 1)

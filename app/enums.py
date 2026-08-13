@@ -10,6 +10,7 @@ class Role(str, Enum):
 
 
 class RegionStatus(str, Enum):
+    provisioning = "provisioning"
     trial = "trial"
     active = "active"
     suspended = "suspended"

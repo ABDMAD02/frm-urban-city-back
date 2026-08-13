@@ -1217,6 +1217,9 @@ class DbStore:
             addressSchema=row.address_schema or "microdistrict,street,house",
             cityType=row.city_type,
             oblast=row.oblast,
+            centerLat=row.center_lat,
+            centerLng=row.center_lng,
+            mapZoom=row.map_zoom,
         )
 
     def update_geo_config(self, city_id: str, body: dto.GeoConfigPatch) -> dto.GeoConfig:
@@ -1241,6 +1244,9 @@ class DbStore:
             "addressSchema": "address_schema",
             "cityType": "city_type",
             "oblast": "oblast",
+            "centerLat": "center_lat",
+            "centerLng": "center_lng",
+            "mapZoom": "map_zoom",
         }
         for key, attr in mapping.items():
             if key in data:

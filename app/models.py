@@ -417,9 +417,18 @@ class DistrictCreate(BaseModel):
     name: str
 
 
+class DistrictPatch(BaseModel):
+    name: str
+
+
 class MicrodistrictCreate(BaseModel):
     districtId: str | None = None
     name: str
+
+
+class MicrodistrictPatch(BaseModel):
+    name: str | None = None
+    districtId: str | None = None
 
 
 class ObjectTypeCreate(BaseModel):
@@ -477,6 +486,9 @@ class GeoConfig(BaseModel):
     addressSchema: str
     cityType: str | None = None
     oblast: str | None = None
+    centerLat: float | None = None
+    centerLng: float | None = None
+    mapZoom: int | None = None
 
 
 class GeoConfigPatch(BaseModel):
@@ -486,6 +498,44 @@ class GeoConfigPatch(BaseModel):
     addressSchema: str | None = None
     cityType: str | None = None
     oblast: str | None = None
+    centerLat: float | None = None
+    centerLng: float | None = None
+    mapZoom: int | None = None
+
+
+class GeoImportDistrict(BaseModel):
+    name: str
+
+
+class GeoImportMicrodistrict(BaseModel):
+    name: str
+    districtId: str | None = None
+    districtName: str | None = None
+
+
+class GeoImportStreet(BaseModel):
+    name: str
+    districtId: str | None = None
+    districtName: str | None = None
+    microdistrictId: str | None = None
+    microdistrictName: str | None = None
+
+
+class GeoImportRequest(BaseModel):
+    districts: list[GeoImportDistrict] = Field(default_factory=list)
+    microdistricts: list[GeoImportMicrodistrict] = Field(default_factory=list)
+    streets: list[GeoImportStreet] = Field(default_factory=list)
+
+
+class GeoImportCounts(BaseModel):
+    districts: int = 0
+    microdistricts: int = 0
+    streets: int = 0
+
+
+class GeoImportResponse(BaseModel):
+    added: GeoImportCounts
+    skipped: int
 
 
 class CurrentCity(BaseModel):

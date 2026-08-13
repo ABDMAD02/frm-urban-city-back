@@ -69,6 +69,7 @@ def _uuid_pk() -> Mapped[uuid.UUID]:
 # ── Справочники географии ─────────────────────────────────────────
 class District(Base):
     __tablename__ = "district"
+    __table_args__ = (UniqueConstraint("region_id", "name", name="uq_district_region_name"),)
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)  # осмысленный код 'd1'
     region_id: Mapped[str] = mapped_column(
@@ -81,6 +82,7 @@ class District(Base):
 
 class Microdistrict(Base):
     __tablename__ = "microdistrict"
+    __table_args__ = (UniqueConstraint("region_id", "name", name="uq_microdistrict_region_name"),)
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)  # 'm1'
     region_id: Mapped[str] = mapped_column(
@@ -115,6 +117,9 @@ class Region(Base):
     address_schema: Mapped[str] = mapped_column(
         Text, nullable=False, server_default="microdistrict,street,house"
     )
+    center_lat: Mapped[Optional[float]] = mapped_column(Double, nullable=True)
+    center_lng: Mapped[Optional[float]] = mapped_column(Double, nullable=True)
+    map_zoom: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -495,6 +500,17 @@ class Notification(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     date: Mapped[date] = mapped_column(Date, nullable=False)
     read: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+
+
+class GeoCatalogCity(Base):
+    """Каталог географии городов РК (read-only справочник для провижна)."""
+
+    __tablename__ = "geo_catalog_city"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    oblast: Mapped[Optional[str]] = mapped_column(Text)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
 
 # ── Refresh-токены (ротация и отзыв) ──────────────────────────────

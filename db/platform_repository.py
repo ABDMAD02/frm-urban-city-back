@@ -20,6 +20,7 @@ from app.models import Credentials
 from app.platform_models import (
     AdminUser,
     AuditEvent,
+    GeoProvisionConfig,
     ProvisionRegionRequest,
     Region,
     RegionAdminAccount,
@@ -29,6 +30,7 @@ from app.user_helpers import login_for, random_temp_password, temp_password
 from app.passwords import hash_password
 from db.codes import uuid_for_code
 from db import models as m
+from db.platform_geo import PlatformGeoMixin
 from db.enums import (
     AccountStatus as DbAccountStatus,
     Locale as DbLocale,
@@ -41,6 +43,7 @@ from db.enums import (
 DEFAULT_REGION = "uralsk"
 
 _STATUS_TRANSITIONS: dict[RegionStatus, set[RegionStatus]] = {
+    RegionStatus.provisioning: set(),  # только POST …/activate
     RegionStatus.trial: {RegionStatus.active, RegionStatus.suspended, RegionStatus.archived},
     RegionStatus.active: {RegionStatus.suspended, RegionStatus.archived},
     RegionStatus.suspended: {RegionStatus.active, RegionStatus.archived},
@@ -72,7 +75,7 @@ def _map_provider(v: MapProvider | DbMapProvider) -> MapProvider:
     return MapProvider(raw)
 
 
-class PlatformStore:
+class PlatformStore(PlatformGeoMixin):
     def __init__(self, session: Session) -> None:
         self._session = session
 
@@ -99,6 +102,9 @@ class PlatformStore:
             hasMicrodistricts=bool(getattr(row, "has_microdistricts", True)),
             hasStreets=bool(getattr(row, "has_streets", True)),
             addressSchema=getattr(row, "address_schema", None) or "microdistrict,street,house",
+            centerLat=getattr(row, "center_lat", None),
+            centerLng=getattr(row, "center_lng", None),
+            mapZoom=getattr(row, "map_zoom", None),
         )
 
 
@@ -293,27 +299,47 @@ class PlatformStore:
         if self._session.get(m.Region, region_id):
             raise LookupError("region_exists")
 
+        geo = body.geo
+        if geo and geo.source == "catalog":
+            if not geo.cityCatalogId:
+                raise ValueError("catalog_id_required")
+            catalog_id = geo.cityCatalogId
+            initial_status = DbRegionStatus.active
+        else:
+            catalog_id = None
+            initial_status = DbRegionStatus.provisioning
+
+        if geo and geo.config:
+            cfg = geo.config
+        else:
+            cfg = GeoProvisionConfig(
+                hasDistricts=body.hasDistricts,
+                hasMicrodistricts=body.hasMicrodistricts,
+                hasStreets=body.hasStreets,
+                addressSchema=body.addressSchema,
+                cityType=body.cityType,
+                oblast=body.oblast,
+            )
+
         region = m.Region(
             id=region_id,
             code=code,
             name=body.name.strip(),
-            status=DbRegionStatus.active,
+            status=initial_status,
             timezone=body.timezone,
             locale=DbLocale(body.locale.value),
             map_provider=DbMapProvider(body.mapProvider.value),
             created_at=_now(),
-            city_type=body.cityType,
-            oblast=body.oblast,
-            has_districts=body.hasDistricts,
-            has_microdistricts=body.hasMicrodistricts,
-            has_streets=body.hasStreets,
-            address_schema=body.addressSchema or "microdistrict,street,house",
         )
         self._session.add(region)
         self._session.flush()
+        self._apply_geo_config(region, cfg)
 
         self._seed_region_refs(region_id)
         self._seed_checklist_template(region_id)
+        if catalog_id:
+            self.seed_geo_from_catalog(region_id, catalog_id)
+
         account, creds = self._issue_region_admin(region_id=region_id, name=body.adminName)
         self._write_audit(
             region_id=region_id,

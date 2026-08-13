@@ -58,6 +58,15 @@ def login(body: LoginRequest, repo: StoreDep, platform: PlatformStoreDep):
             status.HTTP_403_FORBIDDEN,
             detail={"message": "Аккаунт заблокирован", "code": "account_blocked"},
         )
+    if user.regionId:
+        from app.enums import RegionStatus
+
+        rstatus = platform.get_region_status(user.regionId)
+        if rstatus == RegionStatus.provisioning:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail={"message": "Регион ещё настраивается", "code": "region_provisioning"},
+            )
     tokens = security.issue_tokens(user)
     return AuthResponse(user=user, **tokens.model_dump())
 
