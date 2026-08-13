@@ -114,6 +114,11 @@ class RegionStatusPatch(BaseModel):
     status: RegionStatus
 
 
+class RegionPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1)
+    code: str | None = Field(default=None, min_length=2, max_length=32)
+
+
 class ReissueAdminRequest(BaseModel):
     name: str = Field(min_length=1)
 

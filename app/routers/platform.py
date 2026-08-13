@@ -30,6 +30,7 @@ from app.platform_models import (
     ProvisionRegionResponse,
     Region,
     RegionAdminAccount,
+    RegionPatch,
     RegionStatusPatch,
     ReissueAdminRequest,
     ReissueAdminResponse,
@@ -160,6 +161,24 @@ def provision_region(
     except ValueError as exc:
         _value(exc)
     return ProvisionRegionResponse(region=region, adminAccount=account, credentials=creds)
+
+
+@router.patch("/platform/regions/{regionId}", response_model=Region)
+def patch_region(
+    regionId: str,
+    body: RegionPatch,
+    store: PlatformStoreDep,
+    actor: AdminUser = Depends(require_platform_superadmin),
+):
+    # Переименование региона: name и/или code (человекочитаемый слаг). id (ключ) не меняется.
+    try:
+        return store.patch_region(regionId, name=body.name, code=body.code, actor=actor.email or actor.name)
+    except LookupError:
+        _raise(404, "Регион не найден", "region_not_found")
+    except ValueError as exc:
+        if str(exc) == "region_exists":
+            _raise(409, "Регион с таким кодом уже существует", "region_exists")
+        _value(exc)
 
 
 @router.patch("/platform/regions/{regionId}/status", response_model=Region)

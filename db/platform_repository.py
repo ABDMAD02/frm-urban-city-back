@@ -295,9 +295,10 @@ class PlatformStore(PlatformGeoMixin):
         code = re.sub(r"[^a-z0-9_-]", "", body.code.strip().lower())
         if not code:
             raise ValueError("invalid_code")
-        region_id = code
-        if self._session.get(m.Region, region_id):
+        # id — непрозрачный стабильный ключ (FK ссылаются на него); code — изменяемый слаг.
+        if self._session.scalar(select(m.Region).where(m.Region.code == code)):
             raise LookupError("region_exists")
+        region_id = f"reg-{uuid.uuid4().hex[:12]}"
 
         geo = body.geo
         if geo and geo.source == "catalog":
@@ -370,6 +371,21 @@ class PlatformStore(PlatformGeoMixin):
         action = _STATUS_AUDIT.get(status)
         if action:
             self._write_audit(region_id=region_id, actor=actor, action=action, detail=status.value)
+        self._session.flush()
+        return self._region(row)
+
+    def patch_region(self, region_id: str, *, name: str | None = None, code: str | None = None, actor: str) -> Region:
+        row = self._session.get(m.Region, region_id)
+        if row is None:
+            raise LookupError("region_not_found")
+        if code is not None:
+            new_code = re.sub(r"[^a-z0-9_-]", "", code.strip().lower())
+            if new_code and new_code != row.code:
+                if self._session.scalar(select(m.Region).where(m.Region.code == new_code)):
+                    raise ValueError("region_exists")
+                row.code = new_code
+        if name is not None and name.strip():
+            row.name = name.strip()
         self._session.flush()
         return self._region(row)
 

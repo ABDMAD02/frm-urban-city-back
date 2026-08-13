@@ -1,6 +1,7 @@
 """In-memory платформенный store для USE_DB=0."""
 from __future__ import annotations
 
+import secrets
 from datetime import date, datetime, timedelta, timezone
 
 from app.enums import (
@@ -47,6 +48,10 @@ from app.user_helpers import (
 )
 from app.passwords import hash_password
 
+
+def _new_region_id() -> str:
+    """Непрозрачный стабильный ключ региона (не выводится из code — переименование безопасно)."""
+    return f"reg-{secrets.token_hex(5)}"
 
 
 class MemoryPlatformStore:
@@ -225,8 +230,11 @@ class MemoryPlatformStore:
 
     def provision_region(self, body: ProvisionRegionRequest, *, actor: str):
         code = body.code.strip().lower()
-        if any(r.id == code for r in self.regions):
+        # code — человекочитаемый слаг (можно потом переименовать); ключ региона (id) —
+        # непрозрачный стабильный токен, на который ссылаются все данные и токен.
+        if any(r.code == code for r in self.regions):
             raise LookupError("region_exists")
+        rid = _new_region_id()
         today = date.today()
         geo = body.geo
         if geo and geo.source == "catalog":
@@ -249,7 +257,7 @@ class MemoryPlatformStore:
             )
 
         region = Region(
-            id=code,
+            id=rid,
             code=code,
             name=body.name.strip(),
             status=status,
@@ -268,10 +276,10 @@ class MemoryPlatformStore:
             mapZoom=cfg.mapZoom,
         )
         login = login_for(body.adminName)
-        code_u = f"ra-{code}-1"
+        code_u = f"ra-{rid}-1"
         account = RegionAdminAccount(
             id=code_u,
-            regionId=code,
+            regionId=rid,
             name=body.adminName.strip(),
             login=login,
             role="region_admin",
@@ -281,18 +289,18 @@ class MemoryPlatformStore:
         creds = Credentials(login=login, tempPassword=random_temp_password())
         self.regions.append(region)
         self.region_admins.append(account)
-        self._ref_seeded.add(code)
-        self._audit(code, actor, PlatformAuditAction.region_provisioned, f"admin={login}")
-        self._audit(code, actor, PlatformAuditAction.region_admin_issued, login)
+        self._ref_seeded.add(rid)
+        self._audit(rid, actor, PlatformAuditAction.region_provisioned, f"admin={login}")
+        self._audit(rid, actor, PlatformAuditAction.region_admin_issued, login)
         # Mirror checklist + empty geo into operational memory store (no Uralsk copy)
         from app import store as seed_store
         from app.deps import _memory
         from app.enums import AccountStatus as AccStatus, Role
         from app.models import GeoConfig, User
 
-        _memory.seed_checklist_for_region(code)
+        _memory.seed_checklist_for_region(rid)
         _memory.set_geo_config(
-            code,
+            rid,
             GeoConfig(
                 hasDistricts=cfg.hasDistricts,
                 hasMicrodistricts=cfg.hasMicrodistricts,
@@ -307,10 +315,10 @@ class MemoryPlatformStore:
             name=body.name.strip(),
         )
         if geo and geo.source == "catalog" and geo.cityCatalogId:
-            self._seed_catalog_geo(code, geo.cityCatalogId)
+            self._seed_catalog_geo(rid, geo.cityCatalogId)
             region = region.model_copy(update={
                 "hasDistricts": cfg.hasDistricts,
-                "oblast": _memory._geo[code].oblast,
+                "oblast": _memory._geo[rid].oblast,
             })
         admin_user = User(
             id=code_u,
@@ -321,11 +329,29 @@ class MemoryPlatformStore:
             email=f"{login}@{code}.local",
             status=AccStatus.active,
             createdAt=today.isoformat(),
-            regionId=code,
+            regionId=rid,
         )
         seed_store.USERS.append(admin_user)
         _memory._password_hashes[code_u] = hash_password(creds.tempPassword)
         return region, account, creds
+
+    def patch_region(self, region_id: str, *, name: str | None = None, code: str | None = None, actor: str) -> Region:
+        row = self.find_region(region_id)
+        if row is None:
+            raise LookupError("region_not_found")
+        update: dict = {}
+        if code is not None:
+            new_code = code.strip().lower()
+            if new_code and any(r.code == new_code and r.id != region_id for r in self.regions):
+                raise ValueError("region_exists")
+            update["code"] = new_code
+        if name is not None and name.strip():
+            update["name"] = name.strip()
+        if not update:
+            return row
+        updated = row.model_copy(update=update)
+        self.regions = [updated if r.id == region_id else r for r in self.regions]
+        return updated
 
     def patch_region_status(self, region_id: str, status: RegionStatus, *, actor: str) -> Region:
         row = next((r for r in self.regions if r.id == region_id), None)
