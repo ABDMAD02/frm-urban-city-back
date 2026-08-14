@@ -4,12 +4,13 @@ from __future__ import annotations
 from collections.abc import Generator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app import security
 from app.deps import use_database
+from app.geo_import import GeoImportParseError, parse_geo_file
 from app.models import (
     DistrictCreate,
     DistrictPatch,
@@ -395,6 +396,34 @@ def import_geo(
     store: PlatformStoreDep,
     _: AdminUser = Depends(require_platform_superadmin),
 ):
+    try:
+        return store.import_region_geo(regionId, body)
+    except LookupError:
+        _raise(404, "Регион не найден", "region_not_found")
+
+
+# Импорт географии файлом — JSON (плоский/иерархический), CSV или TSV.
+# Формат детектится по расширению/содержимому; можно переопределить полем format.
+MAX_GEO_FILE_BYTES = 5 * 1024 * 1024
+
+
+@router.post("/platform/regions/{regionId}/geo/import-file", response_model=GeoImportResponse)
+async def import_geo_file(
+    regionId: str,
+    store: PlatformStoreDep,
+    file: UploadFile = File(...),
+    format: str | None = Form(default=None),
+    _: AdminUser = Depends(require_platform_superadmin),
+):
+    content = await file.read()
+    if not content:
+        _raise(422, "Пустой файл", "empty_file")
+    if len(content) > MAX_GEO_FILE_BYTES:
+        _raise(413, "Файл слишком большой (макс. 5 МБ)", "file_too_large")
+    try:
+        body = parse_geo_file(file.filename or "", content, format)
+    except GeoImportParseError as exc:
+        _raise(422, str(exc), "geo_import_parse_error")
     try:
         return store.import_region_geo(regionId, body)
     except LookupError:

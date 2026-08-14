@@ -536,31 +536,55 @@ class MemoryPlatformStore:
         return merged
 
     def import_region_geo(self, region_id: str, body: GeoImportRequest) -> GeoImportResponse:
+        if self.find_region(region_id) is None:
+            raise LookupError("region_not_found")
         added = GeoImportCounts()
         skipped = 0
+        # Связи резолвим по имени (как в проде на БД); дедуп — по имени уровня.
+        district_by_name = {d.name.strip().lower(): d.id for d in self.list_region_districts(region_id)}
+        md_by_name = {m.name.strip().lower(): m.id for m in self.list_region_microdistricts(region_id)}
+        street_names = {s.name.strip().lower() for s in self.list_region_streets(region_id)}
+
         for item in body.districts:
-            try:
-                self.create_region_district(region_id, DistrictCreate(name=item.name))
-                added.districts += 1
-            except Exception:
+            key = item.name.strip().lower()
+            if not key or key in district_by_name:
                 skipped += 1
+                continue
+            row = self.create_region_district(region_id, DistrictCreate(name=item.name.strip()))
+            district_by_name[key] = row.id
+            added.districts += 1
+
         for item in body.microdistricts:
-            try:
-                self.create_region_microdistrict(
-                    region_id, MicrodistrictCreate(name=item.name, districtId=item.districtId)
-                )
-                added.microdistricts += 1
-            except Exception:
+            key = item.name.strip().lower()
+            if not key or key in md_by_name:
                 skipped += 1
+                continue
+            did = item.districtId
+            if not did and item.districtName:
+                did = district_by_name.get(item.districtName.strip().lower())
+            row = self.create_region_microdistrict(
+                region_id, MicrodistrictCreate(name=item.name.strip(), districtId=did)
+            )
+            md_by_name[key] = row.id
+            added.microdistricts += 1
+
         for item in body.streets:
-            try:
-                self.create_region_street(
-                    region_id,
-                    StreetCreate(name=item.name, districtId=item.districtId, microdistrictId=item.microdistrictId),
-                )
-                added.streets += 1
-            except Exception:
+            key = item.name.strip().lower()
+            if not key or key in street_names:
                 skipped += 1
+                continue
+            did = item.districtId
+            if not did and item.districtName:
+                did = district_by_name.get(item.districtName.strip().lower())
+            mid = item.microdistrictId
+            if not mid and item.microdistrictName:
+                mid = md_by_name.get(item.microdistrictName.strip().lower())
+            self.create_region_street(
+                region_id, StreetCreate(name=item.name.strip(), districtId=did, microdistrictId=mid)
+            )
+            street_names.add(key)
+            added.streets += 1
+
         return GeoImportResponse(added=added, skipped=skipped)
 
     def list_geo_catalog_cities(self) -> list[GeoCatalogCitySummary]:
