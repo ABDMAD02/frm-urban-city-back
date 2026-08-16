@@ -110,7 +110,8 @@ def logout():
 def change_password(
     body: ChangePasswordRequest,
     repo: StoreDep,
-    user: User = Depends(security.get_current_user),
+    # no-gate: пользователь с temp-паролём обязан иметь возможность его сменить
+    user: User = Depends(security.get_current_user_allow_password_change),
 ):
     _, current_hash = repo.authenticate_lookup(user.login or user.email or user.id)
     if not verify_password(body.oldPassword, current_hash):

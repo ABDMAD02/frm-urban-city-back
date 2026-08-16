@@ -13,11 +13,12 @@ def test_create_owner_autocreates_login(client, region_admin):
     assert body["owner"]["name"] == "ТОО Поле"
     creds = body["credentials"]
     assert creds and creds["login"] and creds["tempPassword"]
-    # логин владельца работает
+    # логин владельца работает; первый вход требует смены temp-пароля (force-change)
     ok = client.post(f"{API}/auth/v2/login", json={"email": creds["login"], "password": creds["tempPassword"]})
     assert ok.status_code == 200, ok.text
-    me = client.get(f"{API}/auth/me", headers={"Authorization": f"Bearer {ok.json()['access_token']}"}).json()
+    me = ok.json()["user"]                       # профиль берём из ответа логина — /auth/me закрыт гейтом
     assert me["role"] == "owner"
+    assert me["passwordChangeRequired"] is True
     # созданный аккаунт связан с бизнесом
     assert body["owner"]["ownerUserId"] == me["id"]
 

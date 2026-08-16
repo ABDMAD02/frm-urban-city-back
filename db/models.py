@@ -239,6 +239,10 @@ class AppUser(Base):
     status: Mapped[AccountStatus] = mapped_column(
         pg_enum(AccountStatus), nullable=False, server_default="active"
     )
+    # Пока true — выданный temp-пароль не сменён; операционные ручки закрыты (см. security).
+    password_change_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
     region_id: Mapped[Optional[str]] = mapped_column(
         Text, ForeignKey("region.id", ondelete="SET NULL"), index=True
     )

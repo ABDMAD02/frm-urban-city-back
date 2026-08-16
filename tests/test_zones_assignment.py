@@ -25,6 +25,19 @@ def _login(client, email, pw):
     return {"Authorization": f"Bearer {client.post(f'{API}/auth/v2/login', json={'email': email, 'password': pw}).json()['access_token']}"}
 
 
+def _first_login(client, login, temp_pw, new_pw="ZonesPass123!"):
+    """Первый вход по temp-паролю: сервер требует force-change. Меняем пароль и
+    возвращаем рабочие headers (тот же токен после смены проходит гейт)."""
+    r = client.post(f"{API}/auth/v2/login", json={"email": login, "password": temp_pw})
+    assert r.status_code == 200, r.text
+    assert r.json()["user"]["passwordChangeRequired"] is True
+    h = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    ch = client.post(f"{API}/auth/change-password",
+                     json={"oldPassword": temp_pw, "newPassword": new_pw}, headers=h)
+    assert ch.status_code == 204, ch.text
+    return h
+
+
 def _obj_ids(client, headers):
     return {o["id"] for o in client.get(f"{API}/objects", headers=headers).json()}
 
@@ -55,7 +68,7 @@ def test_tc1_override_beats_zone(client, region_admin, urbanist):
 
 def test_tc5_urbanist_without_zones_sees_empty(client, region_admin):
     _v_id, login, pw = _new_urbanist_with_creds(client, region_admin, "Без Зон")
-    vh = _login(client, login, pw)
+    vh = _first_login(client, login, pw)                    # temp-пароль → force-change → рабочая сессия
     assert _obj_ids(client, vh) == set()                    # пустой скоуп, не весь регион
 
 
@@ -120,5 +133,12 @@ def test_reset_password_keeps_enum_status(client, region_admin):
     # вход по новому паролю не должен падать 500 (status теперь enum)
     r = client.post(f"{API}/auth/v2/login", json={"email": login, "password": new_pw})
     assert r.status_code == 200, r.text
-    me = client.get(f"{API}/auth/me", headers={"Authorization": f"Bearer {r.json()['access_token']}"})
+    # после сброса — снова force-change; /auth/me закрыт гейтом, пока не сменим пароль
+    assert r.json()["user"]["passwordChangeRequired"] is True
+    tok = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    assert client.get(f"{API}/auth/me", headers=tok).status_code == 403
+    ch = client.post(f"{API}/auth/change-password",
+                     json={"oldPassword": new_pw, "newPassword": "ResetPass123!"}, headers=tok)
+    assert ch.status_code == 204, ch.text
+    me = client.get(f"{API}/auth/me", headers=tok)
     assert me.status_code == 200, me.text

@@ -330,6 +330,7 @@ class MemoryPlatformStore:
             status=AccStatus.active,
             createdAt=today.isoformat(),
             regionId=rid,
+            passwordChangeRequired=True,
         )
         seed_store.USERS.append(admin_user)
         _memory._password_hashes[code_u] = hash_password(creds.tempPassword)

@@ -355,6 +355,7 @@ class MemoryStore:
         if user is None:
             return False
         self._password_hashes[user.id] = hash_password(password)
+        user.passwordChangeRequired = False  # пароль сменён — снимаем force-change
         return True
 
     def create_user(self, body: CreateUserRequest) -> tuple[User, Credentials]:
@@ -388,6 +389,7 @@ class MemoryStore:
             login=login,
             status="active",
             createdAt=config.today_str(),
+            passwordChangeRequired=True,
         )
         # Recompute ownerObjectIds after possible link
         if body.role.value == "owner":
@@ -414,6 +416,7 @@ class MemoryStore:
             user.status = AccountStatus.active
             plain = random_temp_password()
             self._password_hashes[user.id] = hash_password(plain)
+            user.passwordChangeRequired = True
             creds = Credentials(login=user.login or "", tempPassword=plain)
         return user, creds
 
@@ -484,6 +487,7 @@ class MemoryStore:
                 id=ucode, name=body.name.strip(), role=Role.owner, position="Владелец бизнеса",
                 login=login, email=body.email, status=AccountStatus.active,
                 createdAt=config.today_str(), regionId=self._region_id,
+                passwordChangeRequired=True,
             )
             store.USERS.append(account)
             self._password_hashes[ucode] = hash_password(plain)

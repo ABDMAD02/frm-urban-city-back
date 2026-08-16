@@ -47,11 +47,11 @@ def decode(token: str, expected: str) -> str:
     return payload["sub"]
 
 
-def get_current_user(
+def _authenticated_user(
     repo: StoreDep,
-    creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+    creds: Optional[HTTPAuthorizationCredentials],
 ) -> User:
-    """Обязательный access JWT. Без демо-подстановки."""
+    """Загрузка пользователя по access JWT + проверка блокировки. БЕЗ гейта смены пароля."""
     if creds is None:
         _unauthorized()
     uid = decode(creds.credentials, "access")
@@ -62,6 +62,39 @@ def get_current_user(
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             detail={"message": "Аккаунт заблокирован", "code": "account_blocked"},
+        )
+    return user
+
+
+def get_current_user_allow_password_change(
+    repo: StoreDep,
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> User:
+    """Как get_current_user, но БЕЗ force-change гейта.
+
+    Только для /auth/change-password: пользователь с temp-паролём обязан иметь
+    возможность его сменить, иначе — тупик (гейт блокирует смену, смена снимает гейт).
+    """
+    return _authenticated_user(repo, creds)
+
+
+def get_current_user(
+    repo: StoreDep,
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> User:
+    """Обязательный access JWT. Без демо-подстановки.
+
+    Пока `passwordChangeRequired` — доступ к операционным ручкам закрыт (403
+    `password_change_required`): клиент обязан сначала сменить выданный temp-пароль.
+    """
+    user = _authenticated_user(repo, creds)
+    if user.passwordChangeRequired:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "Требуется смена временного пароля",
+                "code": "password_change_required",
+            },
         )
     return user
 
