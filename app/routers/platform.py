@@ -414,9 +414,11 @@ def import_geo(
     body: GeoImportRequest,
     store: PlatformStoreDep,
     _: AdminUser = Depends(require_platform_superadmin),
+    mode: str = Query("append", pattern="^(append|replace)$"),
 ):
+    # mode=append (по умолч.) — добавить к существующему; replace — стереть гео региона и залить заново.
     try:
-        return store.import_region_geo(regionId, body)
+        return store.import_region_geo(regionId, body, mode=mode)
     except LookupError:
         _raise(404, "Регион не найден", "region_not_found")
 
