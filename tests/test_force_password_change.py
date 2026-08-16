@@ -29,11 +29,13 @@ def test_new_account_must_change_password_then_unblocks(client, region_admin):
     assert r.json()["user"]["passwordChangeRequired"] is True
     h = {"Authorization": f"Bearer {r.json()['access_token']}"}
 
-    # 2) операционные ручки закрыты гейтом
+    # 2) /auth/me НЕ гейтится — клиент читает флаг; операционные ручки закрыты
     me = client.get(f"{API}/auth/me", headers=h)
-    assert me.status_code == 403
-    assert me.json()["code"] == "password_change_required"
-    assert client.get(f"{API}/objects", headers=h).status_code == 403
+    assert me.status_code == 200
+    assert me.json()["passwordChangeRequired"] is True
+    objs = client.get(f"{API}/objects", headers=h)
+    assert objs.status_code == 403
+    assert objs.json()["code"] == "password_change_required"
 
     # 3) сменить пароль можно (no-gate), это снимает флаг
     ch = client.post(f"{API}/auth/change-password",

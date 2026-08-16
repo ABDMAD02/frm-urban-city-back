@@ -97,7 +97,10 @@ def logout_v2():
 
 
 @router.get("/auth/me", response_model=User, summary="Профиль текущего пользователя")
-def me(user: User = Depends(security.get_current_user)):
+def me(user: User = Depends(security.get_current_user_allow_password_change)):
+    # /auth/me НЕ гейтим force-change: клиент читает свой профиль (и флаг
+    # passwordChangeRequired) при восстановлении сессии, чтобы показать экран
+    # смены пароля. Операционные ручки (get_current_user) остаются закрыты.
     return user
 
 

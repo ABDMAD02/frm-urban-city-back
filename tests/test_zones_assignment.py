@@ -133,12 +133,9 @@ def test_reset_password_keeps_enum_status(client, region_admin):
     # вход по новому паролю не должен падать 500 (status теперь enum)
     r = client.post(f"{API}/auth/v2/login", json={"email": login, "password": new_pw})
     assert r.status_code == 200, r.text
-    # после сброса — снова force-change; /auth/me закрыт гейтом, пока не сменим пароль
+    # после сброса — снова force-change; /auth/me доступен (не гейтится) и отдаёт enum-статус
     assert r.json()["user"]["passwordChangeRequired"] is True
     tok = {"Authorization": f"Bearer {r.json()['access_token']}"}
-    assert client.get(f"{API}/auth/me", headers=tok).status_code == 403
-    ch = client.post(f"{API}/auth/change-password",
-                     json={"oldPassword": new_pw, "newPassword": "ResetPass123!"}, headers=tok)
-    assert ch.status_code == 204, ch.text
     me = client.get(f"{API}/auth/me", headers=tok)
     assert me.status_code == 200, me.text
+    assert me.json()["passwordChangeRequired"] is True
