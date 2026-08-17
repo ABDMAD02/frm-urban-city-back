@@ -184,19 +184,8 @@ class PlatformStore(PlatformGeoMixin):
             )
         self._session.flush()
     def _issue_region_admin(
-        self, *, region_id: str, name: str, reissue: bool = False
+        self, *, region_id: str, name: str
     ) -> tuple[RegionAdminAccount, Credentials]:
-        if reissue:
-            for old in self._session.scalars(
-                select(m.AppUser).where(
-                    m.AppUser.region_id == region_id,
-                    m.AppUser.role == DbRole.region_admin,
-                )
-            ).all():
-                old.status = DbAccountStatus.blocked
-                if old.login and not old.login.endswith(".blocked"):
-                    old.login = f"{old.login}.blocked.{old.code or 'x'}"[:120]
-
         login = login_for(name)
         # uniqueness
         base = login
@@ -395,9 +384,31 @@ class PlatformStore(PlatformGeoMixin):
     ) -> tuple[RegionAdminAccount, Credentials]:
         if self._session.get(m.Region, region_id) is None:
             raise LookupError("region_not_found")
-        account, creds = self._issue_region_admin(
-            region_id=region_id, name=body.name, reissue=True
-        )
+        # Перевыпуск = СБРОС пароля существующему аккаунту админа региона in-place.
+        # Раньше блокировали старый аккаунт и заводили новый — это плодило логины
+        # (a.ildar → a.ildar2 → …) и падало 422 duplicate на повторе. Теперь тот же
+        # аккаунт (id/логин), новый temp-пароль + force-change при первом входе.
+        existing = self._session.scalars(
+            select(m.AppUser)
+            .where(
+                m.AppUser.region_id == region_id,
+                m.AppUser.role == DbRole.region_admin,
+                m.AppUser.status == DbAccountStatus.active,
+            )
+            .order_by(m.AppUser.created_at)
+        ).first()
+        if existing is not None:
+            plain = random_temp_password()
+            existing.password_hash = hash_password(plain)
+            existing.password_change_required = True
+            if body.name and body.name.strip() and body.name.strip() != existing.name:
+                existing.name = body.name.strip()
+            self._session.flush()
+            account = self._region_admin(existing)
+            creds = Credentials(login=existing.login, tempPassword=plain)
+        else:
+            # Активного админа нет (был удалён/заблокирован) — заводим заново.
+            account, creds = self._issue_region_admin(region_id=region_id, name=body.name)
         self._write_audit(
             region_id=region_id,
             actor=actor,
