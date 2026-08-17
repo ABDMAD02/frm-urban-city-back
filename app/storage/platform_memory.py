@@ -382,23 +382,47 @@ class MemoryPlatformStore:
     def reissue_admin(self, region_id: str, body: ReissueAdminRequest, *, actor: str):
         if not any(r.id == region_id for r in self.regions):
             raise LookupError("region_not_found")
-        for i, a in enumerate(self.region_admins):
-            if a.regionId == region_id and a.status == AccountStatus.active:
-                self.region_admins[i] = a.model_copy(update={"status": AccountStatus.blocked})
-        login = login_for(body.name)
-        code_u = f"ra-{region_id}-{len(self.region_admins)+1}"
-        account = RegionAdminAccount(
-            id=code_u,
-            regionId=region_id,
-            name=body.name.strip(),
-            login=login,
-            role="region_admin",
-            status=AccountStatus.active,
-            createdAt=date.today().isoformat(),
+        from app import store as seed_store
+        from app.deps import _memory
+
+        # Перевыпуск = СБРОС пароля существующему активному админу in-place: тот же
+        # аккаунт (id/логин), новый temp-пароль + force-change. Раньше блокировали
+        # старый и заводили новый — плодило логины и падало duplicate на повторе.
+        idx = next(
+            (i for i, a in enumerate(self.region_admins)
+             if a.regionId == region_id and a.status == AccountStatus.active),
+            None,
         )
-        creds = Credentials(login=login, tempPassword=random_temp_password())
-        self.region_admins.append(account)
-        self._audit(region_id, actor, PlatformAuditAction.region_admin_reissued, login)
+        if idx is not None:
+            account = self.region_admins[idx]
+            new_name = body.name.strip() if body.name and body.name.strip() else account.name
+            if new_name != account.name:
+                account = account.model_copy(update={"name": new_name})
+                self.region_admins[idx] = account
+            creds = Credentials(login=account.login, tempPassword=random_temp_password())
+            _memory._password_hashes[account.id] = hash_password(creds.tempPassword)
+            for u in seed_store.USERS:
+                if u.id == account.id:
+                    u.passwordChangeRequired = True
+                    u.name = new_name
+                    break
+        else:
+            # Активного админа нет — заводим заново.
+            login = login_for(body.name)
+            code_u = f"ra-{region_id}-{len(self.region_admins)+1}"
+            account = RegionAdminAccount(
+                id=code_u,
+                regionId=region_id,
+                name=body.name.strip(),
+                login=login,
+                role="region_admin",
+                status=AccountStatus.active,
+                createdAt=date.today().isoformat(),
+            )
+            creds = Credentials(login=login, tempPassword=random_temp_password())
+            self.region_admins.append(account)
+            _memory._password_hashes[code_u] = hash_password(creds.tempPassword)
+        self._audit(region_id, actor, PlatformAuditAction.region_admin_reissued, account.login)
         return account, creds
 
     def _with_region(self, region_id: str):
