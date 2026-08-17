@@ -216,6 +216,7 @@ class PlatformStore(PlatformGeoMixin):
             login=login,
             email=f"{login}@{region_id}.local",
             password_hash=hash_password(plain),
+            password_change_required=True,
             status=DbAccountStatus.active,
             region_id=region_id,
             created_at=_now(),

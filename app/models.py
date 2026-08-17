@@ -34,6 +34,8 @@ class User(BaseModel):
     createdAt: str | None = None
     regionId: str | None = None
     email: str | None = None
+    # true, пока пользователь не сменил выданный temp-пароль (force change при первом входе)
+    passwordChangeRequired: bool = False
 
 
 class Owner(BaseModel):

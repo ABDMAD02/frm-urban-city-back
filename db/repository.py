@@ -671,6 +671,7 @@ class DbStore:
         if row is None:
             return False
         row.password_hash = hash_password(password)
+        row.password_change_required = False  # пароль сменён — снимаем force-change
         self._session.flush()
         return True
 
@@ -761,6 +762,7 @@ class DbStore:
             position=body.position.strip(),
             login=login,
             password_hash=hash_password(plain),
+            password_change_required=True,
             status=AccountStatus.active,
             region_id=region_id,
             owner_id=None,
@@ -826,6 +828,7 @@ class DbStore:
             row.status = AccountStatus.active
             plain = random_temp_password()
             row.password_hash = hash_password(plain)
+            row.password_change_required = True
             creds = Credentials(login=row.login or "", tempPassword=plain)
         self._session.flush()
         return self._map_user(row), creds
@@ -903,6 +906,7 @@ class DbStore:
                 position="Владелец бизнеса",
                 login=login,
                 password_hash=hash_password(plain),
+                password_change_required=True,
                 status=AccountStatus.active,
                 region_id=region_id,
                 created_at=_parse_date(config.today_str()),
