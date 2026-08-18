@@ -71,6 +71,54 @@ def record_to_item(raw: dict) -> OwnerImportItem | None:
         return None
 
 
+def lookup_by_bin(bin_value: str, *, client: httpx.Client | None = None) -> dict | None:
+    """Найти одно юрлицо в ``gbd_ul`` по БИН (для автозаполнения формы).
+
+    Возвращает нормализованный dict (name/legalForm/address/oked/director/status)
+    или ``None``, если не найдено. Term-фильтр по ``bin`` egov поддерживает
+    (в отличие от фильтра по адресу), но результат сверяем защитно.
+    """
+    if not config.EGOV_OPENDATA_API_KEY:
+        raise RuntimeError("EGOV_OPENDATA_API_KEY не задан")
+
+    base = config.EGOV_OPENDATA_API_BASE
+    dataset = config.EGOV_OPENDATA_DATASET
+    version = config.EGOV_OPENDATA_DATASET_VERSION
+    url = f"{base}/{dataset}/{version}" if version else f"{base}/{dataset}"
+
+    own_client = client is None
+    cl = client or httpx.Client(timeout=config.EGOV_OPENDATA_TIMEOUT)
+    try:
+        resp = cl.get(url, params={
+            "apiKey": config.EGOV_OPENDATA_API_KEY,
+            "source": json.dumps({"size": 1, "query": {"term": {"bin": bin_value}}}),
+        })
+        resp.raise_for_status()
+        rows = resp.json()
+        if not isinstance(rows, list):
+            return None
+        for raw in rows:
+            # Защита: term-фильтр мог быть проигнорирован → берём только точное совпадение.
+            if (raw.get("bin") or "").strip() != bin_value:
+                continue
+            name = (raw.get("nameru") or raw.get("namekz") or "").strip()
+            if not name:
+                return None
+            return {
+                "name": name,
+                "legalForm": map_legal_form(name).value,
+                "bin": bin_value,
+                "address": (raw.get("addressru") or raw.get("addresskz") or "").strip() or None,
+                "oked": (raw.get("okedru") or raw.get("okedkz") or "").strip() or None,
+                "director": (raw.get("director") or "").strip() or None,
+                "status": (raw.get("statusru") or raw.get("statuskz") or "").strip() or None,
+            }
+        return None
+    finally:
+        if own_client:
+            cl.close()
+
+
 def _region_matches(raw: dict, region_filter: str | None) -> bool:
     if not region_filter:
         return True

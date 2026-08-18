@@ -353,6 +353,18 @@ class OwnerImportItem(BaseModel):
         return text or None
 
 
+class RegistryOwnerLookup(BaseModel):
+    """Данные юрлица из гос-реестра (data.egov.kz) для автозаполнения формы."""
+
+    name: str
+    legalForm: LegalForm
+    bin: str
+    address: str | None = None
+    oked: str | None = None       # вид деятельности (ОКЭД)
+    director: str | None = None
+    status: str | None = None
+
+
 class BulkImportOwnersRequest(BaseModel):
     items: list[OwnerImportItem] = Field(default_factory=list)
 
