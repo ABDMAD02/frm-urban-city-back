@@ -18,8 +18,9 @@ from ..models import (
     MicrodistrictCreate, ObjectTypeCreate, Photo, HistoryEvent, ObjectVersion, User,
     ChecklistTemplateItem, ChecklistTemplateManageRequest, Street, StreetCreate, StreetPatch,
     GeoConfig, GeoConfigPatch, CurrentCity, DesignCodeCatalogItem, ObjectTypeCatalogItem,
-    BulkImportOwnersRequest, BulkImportOwnersResult,
+    BulkImportOwnersRequest, BulkImportOwnersResult, RegistryOwnerLookup,
 )
+import re as _re
 from ..enums import PhotoKind
 
 router = APIRouter(tags=["Справочники"])
@@ -69,6 +70,43 @@ def list_my_owners(repo: StoreDep, user: User = Depends(get_current_user)):
     if user.role.value != "owner":
         raise HTTPException(403, detail={"message": "Только для владельца", "code": "forbidden"})
     return repo.list_owners(owner_user_id=user.id)
+
+
+@router.get(
+    "/owners/registry-lookup",
+    response_model=RegistryOwnerLookup,
+    summary="Найти юрлицо в гос-реестре по БИН (автозаполнение формы)",
+)
+def registry_lookup(
+    bin: str = Query(..., description="БИН — 12 цифр"),
+    user: User = Depends(require_operator),
+) -> RegistryOwnerLookup:
+    """Подтянуть данные бизнеса из data.egov.kz по БИН для ручного добавления.
+
+    Возвращает name/legalForm/адрес/ОКЭД/директора. Ничего не сохраняет —
+    только справка для префилла. 404 — если в реестре не найдено."""
+    if not _re.fullmatch(r"[0-9]{12}", bin or ""):
+        raise HTTPException(422, detail={"message": "БИН должен состоять из 12 цифр", "code": "invalid_bin"})
+    if not config.EGOV_OPENDATA_ENABLED or not config.EGOV_OPENDATA_API_KEY:
+        raise HTTPException(
+            503,
+            detail={"message": "Интеграция с гос-реестром не настроена", "code": "registry_disabled"},
+        )
+    from app.services import egov
+
+    try:
+        found = egov.lookup_by_bin(bin)
+    except Exception:
+        raise HTTPException(
+            502,
+            detail={"message": "Гос-реестр временно недоступен", "code": "registry_unavailable"},
+        )
+    if not found:
+        raise HTTPException(
+            404,
+            detail={"message": "В гос-реестре ничего не найдено по этому БИН", "code": "registry_not_found"},
+        )
+    return RegistryOwnerLookup(**found)
 
 
 @router.post("/owners", response_model=CreateOwnerResponse, status_code=201, summary="Создать собственника")
