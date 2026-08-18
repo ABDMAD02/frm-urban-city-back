@@ -12,6 +12,7 @@ from app import config
 from app import models as dto
 from app.enums import HistoryType, ObjectStatus, PrescriptionStatus
 from app.models import (
+    BulkImportOwnersResult,
     CityObject,
     CreateObjectRequest,
     CreateOwnerRequest,
@@ -25,6 +26,7 @@ from app.models import (
     MicrodistrictCreate,
     ObjectPatch,
     Owner,
+    OwnerImportItem,
     Photo,
     Prescription,
     TrendPoint,
@@ -952,6 +954,55 @@ class DbStore:
             )
         self._session.flush()
         return self._owner_dto(row)
+
+    def import_owners(self, items: list[OwnerImportItem]) -> BulkImportOwnersResult:
+        """Батч-импорт бизнесов (record-only): аккаунт-владелец НЕ создаётся,
+        дубликаты БИН (в батче или уже в регионе) пропускаются.
+
+        Каждая строка — в своём savepoint: сбой одной (гонка по unique БИН)
+        не рушит весь батч. Итоговый commit делает get_store."""
+        from sqlalchemy.exc import IntegrityError
+
+        region_id = self._region_id or "uralsk"
+        result = BulkImportOwnersResult()
+        seen_bins: set[str] = set()
+        for i, it in enumerate(items):
+            if it.bin:
+                if it.bin in seen_bins:
+                    result.skipped += 1
+                    continue
+                exists = self._session.scalar(
+                    select(m.Owner.id).where(
+                        m.Owner.bin == it.bin, m.Owner.region_id == region_id
+                    )
+                )
+                if exists is not None:
+                    result.skipped += 1
+                    continue
+                seen_bins.add(it.bin)
+            code = self.next_id("w")
+            row = m.Owner(
+                id=uuid_for_code(code),
+                code=code,
+                region_id=region_id,
+                name=it.name,
+                legal_form=it.legalForm,
+                bin=it.bin,
+                phone=it.phone,
+                email=it.email,
+                owner_user_id=None,
+            )
+            try:
+                with self._session.begin_nested():
+                    self._session.add(row)
+                    self._session.flush()
+            except IntegrityError:
+                # Гонка: БИН вставлен параллельно между проверкой и flush.
+                result.skipped += 1
+                continue
+            result.created += 1
+            result.createdOwnerIds.append(code)
+        return result
 
     def list_districts(self) -> list[District]:
         q = select(m.District)

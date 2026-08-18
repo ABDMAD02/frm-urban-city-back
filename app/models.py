@@ -43,7 +43,7 @@ class Owner(BaseModel):
     name: str
     legalForm: LegalForm
     bin: str | None = None
-    phone: str
+    phone: str | None = None   # nullable: импортированные из госреестра бизнесы без телефона
     email: str | None = None
     ownerUserId: str | None = None
 
@@ -311,6 +311,65 @@ class CreateOwnerRequest(BaseModel):
         if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", text, flags=re.IGNORECASE):
             raise ValueError("Некорректный email")
         return text
+
+
+# ── Массовый импорт бизнесов (record-only, без авто-аккаунта) ──────
+class OwnerImportItem(BaseModel):
+    """Одна запись батч-импорта. В отличие от CreateOwnerRequest:
+    аккаунт-владелец НЕ создаётся, phone опционален (в госреестре его нет)."""
+
+    name: str
+    legalForm: LegalForm
+    bin: str | None = None
+    phone: str | None = None
+    email: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, value: str) -> str:
+        text = (value or "").strip()
+        if not text:
+            raise ValueError("Название бизнеса обязательно")
+        return text
+
+    @field_validator("bin", mode="before")
+    @classmethod
+    def normalize_bin(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if not re.fullmatch(r"[0-9]{12}", text):
+            raise ValueError("БИН/ИИН должен состоять из 12 цифр")
+        return text
+
+    @field_validator("phone", "email", mode="before")
+    @classmethod
+    def _blank_to_none(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+
+class BulkImportOwnersRequest(BaseModel):
+    items: list[OwnerImportItem] = Field(default_factory=list)
+
+
+class OwnerImportError(BaseModel):
+    index: int
+    bin: str | None = None
+    name: str | None = None
+    code: str
+    message: str
+
+
+class BulkImportOwnersResult(BaseModel):
+    created: int = 0
+    skipped: int = 0            # дубликаты БИН (в батче или уже в регионе)
+    failed: list[OwnerImportError] = Field(default_factory=list)
+    createdOwnerIds: list[str] = Field(default_factory=list)
 
 
 # ── Предписания — действия ────────────────────────────────────────

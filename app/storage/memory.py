@@ -10,6 +10,7 @@ from app.address import DEFAULT_ADDRESS_SCHEMA, DEFAULT_CHECKLIST_ITEMS, build_a
 from app.domain_rules import effective_prescription_status
 from app.enums import AccountStatus, HistoryType, ObjectStatus
 from app.models import (
+    BulkImportOwnersResult,
     ChecklistTemplateItem,
     ChecklistTemplateManageItem,
     CityObject,
@@ -28,6 +29,8 @@ from app.models import (
     MicrodistrictCreate,
     ObjectPatch,
     Owner,
+    OwnerImportError,
+    OwnerImportItem,
     Photo,
     Prescription,
     Street,
@@ -523,6 +526,37 @@ class MemoryStore:
         for k, v in data.items():
             setattr(owner, k, v)
         return owner
+
+    def import_owners(self, items: list[OwnerImportItem]) -> BulkImportOwnersResult:
+        """Батч-импорт бизнесов (record-only): аккаунт-владелец НЕ создаётся,
+        дубликаты БИН (в батче или уже в реестре) пропускаются."""
+        result = BulkImportOwnersResult()
+        seen_bins: set[str] = set()
+        for i, it in enumerate(items):
+            if it.bin:
+                if it.bin in seen_bins or any(o.bin == it.bin for o in store.OWNERS):
+                    result.skipped += 1
+                    continue
+                seen_bins.add(it.bin)
+            try:
+                owner = Owner(
+                    id=store.next_id("w"),
+                    name=it.name,
+                    legalForm=it.legalForm,
+                    bin=it.bin,
+                    phone=it.phone,
+                    email=it.email,
+                    ownerUserId=None,
+                )
+            except Exception as exc:  # pragma: no cover — валидация уже прошла на схеме
+                result.failed.append(
+                    OwnerImportError(index=i, bin=it.bin, name=it.name, code="error", message=str(exc))
+                )
+                continue
+            store.OWNERS.append(owner)
+            result.created += 1
+            result.createdOwnerIds.append(owner.id)
+        return result
 
     def list_districts(self) -> list[District]:
         region_id = self._region_id or "uralsk"

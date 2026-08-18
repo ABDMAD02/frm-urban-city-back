@@ -18,6 +18,7 @@ from ..models import (
     MicrodistrictCreate, ObjectTypeCreate, Photo, HistoryEvent, ObjectVersion, User,
     ChecklistTemplateItem, ChecklistTemplateManageRequest, Street, StreetCreate, StreetPatch,
     GeoConfig, GeoConfigPatch, CurrentCity, DesignCodeCatalogItem, ObjectTypeCatalogItem,
+    BulkImportOwnersRequest, BulkImportOwnersResult,
 )
 from ..enums import PhotoKind
 
@@ -76,6 +77,36 @@ def create_owner(body: CreateOwnerRequest, repo: StoreDep, user: User = Depends(
     # Логин владельца обязателен и авто-создаётся (temp-пароль в credentials).
     owner, creds = repo.create_owner(body)
     return CreateOwnerResponse(owner=owner, credentials=creds)
+
+
+# Максимум записей на один вызов — защита от гигантских тел запроса.
+OWNERS_IMPORT_MAX_ITEMS = 5000
+
+
+@router.post(
+    "/owners/import",
+    response_model=BulkImportOwnersResult,
+    summary="Массовый импорт бизнесов (record-only, без аккаунтов)",
+)
+def import_owners(
+    body: BulkImportOwnersRequest,
+    repo: StoreDep,
+    user: User = Depends(require_region_admin),
+) -> BulkImportOwnersResult:
+    """Батч-загрузка бизнесов в реестр города (напр. из data.egov.kz).
+
+    Аккаунты-владельцы НЕ создаются (привязываются отдельно позже),
+    дубликаты БИН пропускаются. Скоуп — регион текущего админа.
+    """
+    if len(body.items) > OWNERS_IMPORT_MAX_ITEMS:
+        raise HTTPException(
+            413,
+            detail={
+                "message": f"Не более {OWNERS_IMPORT_MAX_ITEMS} записей за один вызов",
+                "code": "too_many_items",
+            },
+        )
+    return repo.import_owners(body.items)
 
 
 @router.patch("/owners/{wid}", response_model=Owner, summary="Правка собственника")
