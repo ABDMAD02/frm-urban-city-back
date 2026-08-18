@@ -164,7 +164,7 @@ class Owner(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     legal_form: Mapped[LegalForm] = mapped_column(pg_enum(LegalForm), nullable=False)
     bin: Mapped[Optional[str]] = mapped_column(Text)  # БИН/ИИН, NULL для физлица без ИИН
-    phone: Mapped[str] = mapped_column(Text, nullable=False)
+    phone: Mapped[Optional[str]] = mapped_column(Text)  # NULL для импортированных из госреестра (телефона нет)
     email: Mapped[Optional[str]] = mapped_column(Text)
     owner_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("app_user.id", ondelete="SET NULL"), index=True
