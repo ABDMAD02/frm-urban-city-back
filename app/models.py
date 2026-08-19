@@ -623,3 +623,8 @@ class CurrentCity(BaseModel):
     addressSchema: str
     cityType: str | None = None
     oblast: str | None = None
+    # Центр карты города — клиент центрирует карту по этим полям. Данные лежат
+    # в region и отдаются в geo-config, но раньше не доходили до cities/current.
+    centerLat: float | None = None
+    centerLng: float | None = None
+    mapZoom: int | None = None

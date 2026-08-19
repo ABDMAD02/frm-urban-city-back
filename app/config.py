@@ -43,6 +43,11 @@ EGOV_OPENDATA_API_BASE = os.getenv("EGOV_OPENDATA_API_BASE", "https://data.egov.
 EGOV_OPENDATA_DATASET = os.getenv("EGOV_OPENDATA_DATASET", "gbd_ul").strip()
 EGOV_OPENDATA_DATASET_VERSION = os.getenv("EGOV_OPENDATA_DATASET_VERSION", "v1").strip()
 EGOV_OPENDATA_PAGE_SIZE = int(os.getenv("EGOV_OPENDATA_PAGE_SIZE", "200"))
+
+# Обратный геокодер (координаты → адрес). Провайдер: off | nominatim | 2gis.
+# На старте — off: ручка честно отвечает 503, а не фиктивным адресом. Реальный
+# провайдер подключается сменой флага без правок клиента.
+GEOCODER_PROVIDER = os.getenv("GEOCODER_PROVIDER", "off").strip().lower()
 EGOV_OPENDATA_TIMEOUT = int(os.getenv("EGOV_OPENDATA_TIMEOUT", "30"))
 
 # Cloudflare R2 (S3-compatible). Bucket: frm-urban-city
