@@ -33,6 +33,23 @@ def login_for(name: str) -> str:
     return f"{first[0]}.{last}" if last else first
 
 
+def unique_login(base: str, taken) -> str:
+    """Разрешение коллизии логина: base, base2, base3… пока не занято.
+
+    Логины уникальны глобально (в т.ч. между городами), а генератор из имени
+    легко даёт совпадения (``t.testov`` у админа другого города). ``taken`` —
+    предикат ``login -> bool`` (True = занят). Без этого ``POST /owners`` падал
+    на уникальном ограничении логина и оператор читал это как «дубль БИН».
+    """
+    if not taken(base):
+        return base
+    for n in range(2, 1000):
+        candidate = f"{base}{n}"
+        if not taken(candidate):
+            return candidate
+    raise RuntimeError(f"не удалось подобрать уникальный логин для «{base}»")
+
+
 def temp_password(seed: str) -> str:
     """Детерминированный демо-пароль по коду. ТОЛЬКО для сид-данных (демо-логины).
 

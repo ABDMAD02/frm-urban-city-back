@@ -40,7 +40,7 @@ from app.models import (
     UpdateUserRequest,
     User,
 )
-from app.user_helpers import login_for, random_temp_password, temp_password
+from app.user_helpers import login_for, random_temp_password, temp_password, unique_login
 
 
 def _default_checklist(region_id: str = "uralsk") -> list[ChecklistTemplateItem]:
@@ -335,6 +335,9 @@ class MemoryStore:
     def find_user_by_login(self, login: str) -> User | None:
         return next((u for u in store.USERS if (u.login or "").lower() == login.lower()), None)
 
+    def _login_taken(self, login: str) -> bool:
+        return self.find_user_by_login(login) is not None
+
     def authenticate_lookup(self, email_or_login: str) -> tuple[User | None, str | None]:
         key = email_or_login.strip().lower()
         login = key.split("@")[0]
@@ -366,7 +369,7 @@ class MemoryStore:
         from fastapi import HTTPException
 
         code = store.next_id("u")
-        login = login_for(body.name)
+        login = unique_login(login_for(body.name), self._login_taken)
         plain = random_temp_password()
         if body.role.value == "owner" and body.ownerId:
             owner = self.find_owner(body.ownerId)
@@ -466,7 +469,6 @@ class MemoryStore:
         from fastapi import HTTPException
         from app.enums import Role
         from app.passwords import hash_password
-        from app.user_helpers import login_for
 
         self._check_bin_duplicate(body.bin)
         creds: Credentials | None = None
@@ -484,7 +486,7 @@ class MemoryStore:
         else:
             # Логин владельца обязателен — авто-создаём аккаунт role=owner (temp-пароль).
             ucode = store.next_id("u")
-            login = login_for(body.name)
+            login = unique_login(login_for(body.name), self._login_taken)
             plain = random_temp_password()
             account = User(
                 id=ucode, name=body.name.strip(), role=Role.owner, position="Владелец бизнеса",
@@ -750,4 +752,7 @@ class MemoryStore:
             addressSchema=geo.addressSchema,
             cityType=geo.cityType,
             oblast=geo.oblast,
+            centerLat=geo.centerLat,
+            centerLng=geo.centerLng,
+            mapZoom=geo.mapZoom,
         )

@@ -48,7 +48,7 @@ def _now_dt() -> datetime:
     return datetime.now(timezone.utc)
 
 
-from app.user_helpers import login_for, random_temp_password, temp_password
+from app.user_helpers import login_for, random_temp_password, temp_password, unique_login
 
 
 class DbStore:
@@ -647,6 +647,12 @@ class DbStore:
         )
         return self._map_user(row) if row else None
 
+    def _login_taken(self, login: str) -> bool:
+        # Логины глобально уникальны — проверяем без региона (лёгкий exists-запрос).
+        return self._session.scalar(
+            select(m.AppUser.id).where(func.lower(m.AppUser.login) == login.lower())
+        ) is not None
+
     def authenticate_lookup(self, email_or_login: str) -> tuple[User | None, str | None]:
         """Найти пользователя по email/login и вернуть (User, password_hash)."""
         key = email_or_login.strip().lower()
@@ -753,7 +759,7 @@ class DbStore:
 
         region_id = self._region_id or "uralsk"
         code = self.next_id("u")
-        login = login_for(body.name)
+        login = unique_login(login_for(body.name), self._login_taken)
         plain = random_temp_password()
 
         row = m.AppUser(
@@ -898,7 +904,7 @@ class DbStore:
         else:
             # Логин владельца обязателен — авто-создаём аккаунт role=owner (temp-пароль).
             ucode = self.next_id("u")
-            login = login_for(body.name)
+            login = unique_login(login_for(body.name), self._login_taken)
             plain = random_temp_password()
             account = m.AppUser(
                 id=uuid_for_code(ucode),
@@ -1337,4 +1343,7 @@ class DbStore:
             addressSchema=row.address_schema or "microdistrict,street,house",
             cityType=row.city_type,
             oblast=row.oblast,
+            centerLat=row.center_lat,
+            centerLng=row.center_lng,
+            mapZoom=row.map_zoom,
         )

@@ -261,11 +261,22 @@ def reverse_geocode(
     lng: float = Query(...),
     user: User = Depends(get_current_user),
 ):
-    try:
-        md = repo.first_microdistrict()
-    except LookupError as exc:
+    # Провайдер за флагом GEOCODER_PROVIDER. Пока реальной интеграции нет —
+    # честно отвечаем 503, а НЕ фиктивным адресом (прежняя заглушка возвращала
+    # первый микрорайон города с адресом «—» на любую точку, тихо порча данные).
+    # Клиент уже умеет глушить 503 в ручной режим — контракт не ломается.
+    from .. import config
+
+    if config.GEOCODER_PROVIDER == "off":
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"message": str(exc), "code": "service_unavailable"},
-        ) from exc
-    return GeocodeResult(address="—", street="—", districtId=md.districtId, microdistrictId=md.id)
+            detail={"message": "Обратный геокодер отключён", "code": "geocoder_unavailable"},
+        )
+    # nominatim/2gis пока не реализованы — тоже честный отказ вместо выдумки.
+    raise HTTPException(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "message": f"Геокодер «{config.GEOCODER_PROVIDER}» не реализован",
+            "code": "geocoder_unavailable",
+        },
+    )
