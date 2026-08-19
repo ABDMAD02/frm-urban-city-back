@@ -163,6 +163,31 @@ class MemoryStore:
     def find_object(self, oid: str) -> CityObject | None:
         return store.find_object(oid)
 
+    PLACEHOLDER_OWNER_NAME = "Собственник не установлен"
+
+    def _placeholder_owner_id(self) -> str:
+        """Технический владелец города для объектов с неустановленным собственником."""
+        from app.models import Owner as OwnerDto
+        from app.enums import LegalForm
+
+        region = self._region_id or "uralsk"
+        found = next(
+            (o for o in store.OWNERS
+             if o.name == self.PLACEHOLDER_OWNER_NAME and getattr(o, "regionId", region) == region
+             and not getattr(o, "archivedAt", None)),
+            None,
+        )
+        if found:
+            return found.id
+        new = OwnerDto(
+            id=store.next_id("w"),
+            name=self.PLACEHOLDER_OWNER_NAME,
+            legalForm=LegalForm.gosorgan,
+            phone=None,
+        )
+        store.OWNERS.append(new)
+        return new.id
+
     def create_object(self, body: CreateObjectRequest, actor: User) -> CityObject:
         oid = store.next_id("o")
         street_name = body.street
@@ -211,7 +236,9 @@ class MemoryStore:
             streetId=body.streetId,
             house=body.house,
             apartment=body.apartment,
-            ownerId=body.ownerId or "w4",
+            # Владелец не указан → технический владелец города, а НЕ демо-владелец
+            # w4 из Уральска (прежнее поведение молча приписывало объект чужому).
+            ownerId=(body.ownerId or self._placeholder_owner_id()),
             status=ObjectStatus.new,
             responsible=actor.name,
             createdAt=config.today_str(),

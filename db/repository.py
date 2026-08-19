@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app import config
 from app import models as dto
-from app.enums import HistoryType, ObjectStatus, PrescriptionStatus
+from app.enums import LegalForm, HistoryType, ObjectStatus, PrescriptionStatus
 from app.models import (
     BulkImportOwnersResult,
     CityObject,
@@ -50,6 +50,18 @@ def _now_dt() -> datetime:
 
 from app.user_helpers import login_for, random_temp_password, temp_password, unique_login
 
+
+
+def _owner_key(name: str | None) -> str:
+    """Ключ сравнения названий: без регистра, кавычек, ОПФ и лишних пробелов."""
+    import re
+
+    if not name:
+        return ""
+    s = name.lower().replace("«", " ").replace("»", " ").replace('"', " ").replace("'", " ")
+    for form in ("тоо", "ип", "ао", "оао", "чп", "кх", "пк", "гу", "кгу", "тов"):
+        s = re.sub(rf"\b{form}\b", " ", s)
+    return re.sub(r"[^0-9a-zа-яё]+", "", s)
 
 class DbStore:
     def __init__(self, session: Session, *, region_id: str | None = "uralsk") -> None:
@@ -140,11 +152,24 @@ class DbStore:
         return f"{prefix}{self._counters[prefix]}"
 
     # ── objects ───────────────────────────────────────────────────
-    def _require_owner_uuid(self, owner_id: str | None, *, region_id: str) -> uuid.UUID:
-        """Resolve public owner id (w11) → UUID; 422 if missing / wrong region."""
+    def _resolve_owner_uuid(self, owner_id: str | None, *, region_id: str) -> uuid.UUID | None:
+        """Публичный id владельца (w11) → UUID.
+
+        Владелец у объекта НЕОБЯЗАТЕЛЕН: колонка ``city_object.owner_id`` nullable,
+        и в контракте ``CreateObjectRequest.ownerId`` не входит в required. Пустое
+        значение → ``None`` (объект без владельца — норма при массовом севе из OSM
+        или при постановке на учёт «в поле», когда собственник ещё не установлен).
+        Прежний код подставлял здесь захардкоженного демо-владельца ``w4``, из-за
+        чего в чужом регионе любой объект без ownerId падал 422 invalid_owner_region.
+
+        Непустое значение валидируется как раньше: несуществующий → 422
+        ``invalid_owner``, из другого региона → 422 ``invalid_owner_region``.
+        """
         from fastapi import HTTPException
 
-        public = owner_id or "w4"
+        public = (owner_id or "").strip()
+        if not public:
+            return None
         uid = self._resolve_uuid(m.Owner, public)
         row = self._session.get(m.Owner, uid) if uid else None
         if row is None:
@@ -164,6 +189,56 @@ class DbStore:
                 },
             )
         return row.id
+
+    PLACEHOLDER_OWNER_NAME = "Собственник не установлен"
+
+    def _placeholder_owner_uuid(self, region_id: str) -> uuid.UUID:
+        """Технический владелец города для объектов с неустановленным собственником.
+
+        Нужен, потому что ``CityObject.ownerId`` в контракте обязателен, а объект
+        без собственника — норма (сев из OSM, постановка «в поле»). Раньше на это
+        место подставлялся демо-владелец ``w4`` из Уральска: в чужом регионе это
+        валило 422, а в своём молча приписывало объект акимату Уральска.
+
+        Заводится один раз на город, БИН не заполняется (партиальный UNIQUE по
+        (region_id, bin) допускает NULL). В реестре бизнесов виден как явный
+        маркер: эти объекты ждут установления собственника.
+        """
+        row = self._session.scalar(
+            select(m.Owner).where(
+                m.Owner.region_id == region_id,
+                m.Owner.name == self.PLACEHOLDER_OWNER_NAME,
+                m.Owner.archived_at.is_(None),
+            )
+        )
+        if row is None:
+            row = m.Owner(
+                id=uuid.uuid4(),
+                code=self.next_id("w"),
+                region_id=region_id,
+                name=self.PLACEHOLDER_OWNER_NAME,
+                legal_form=LegalForm.gosorgan,
+                phone=None,
+            )
+            self._session.add(row)
+            self._session.flush()
+        return row.id
+
+    def _match_owner_by_name(self, name: str, *, region_id: str) -> uuid.UUID | None:
+        """Подбор бизнеса города по названию точки (сев из OSM ↔ засеянные ТОО).
+
+        Сравнение нестрогое: без регистра, кавычек и организационной формы —
+        «Магазин Береке» находит «ТОО «Береке»». При неоднозначности (больше
+        одного совпадения) владелец НЕ подставляется: пусть урбанист выберет сам.
+        """
+        needle = _owner_key(name)
+        if not needle:
+            return None
+        rows = self._session.scalars(
+            select(m.Owner).where(m.Owner.region_id == region_id, m.Owner.archived_at.is_(None))
+        ).all()
+        hits = [r for r in rows if _owner_key(r.name) and _owner_key(r.name) == needle]
+        return hits[0].id if len(hits) == 1 else None
 
     def _city_object_dto(self, row: m.CityObject) -> CityObject:
         # Ensure relationship is loaded so mapper returns short code (w11), not UUID.
@@ -202,6 +277,13 @@ class DbStore:
                 continue
             seen.add(key)
             owner_code = None
+            if not it.bin:
+                # Сев из OSM: БИН в источнике нет — пробуем подобрать бизнес города
+                # по названию точки; не нашли или неоднозначно → технический владелец.
+                uid = self._match_owner_by_name(it.name, region_id=region)
+                if uid:
+                    row = self._session.get(m.Owner, uid)
+                    owner_code = row.code if row else None
             if it.bin:
                 row = self._session.scalar(
                     select(m.Owner).where(
@@ -244,7 +326,9 @@ class DbStore:
 
         region_id = actor.regionId or self._region_id or "uralsk"
         code = self.next_id("o")
-        owner_uid = self._require_owner_uuid(body.ownerId, region_id=region_id)
+        owner_uid = self._resolve_owner_uuid(body.ownerId, region_id=region_id)
+        if owner_uid is None:
+            owner_uid = self._placeholder_owner_uuid(region_id)
         district_id = body.districtId
         microdistrict_id = body.microdistrictId
         street_uid = self._resolve_uuid(m.Street, body.streetId) if body.streetId else None
@@ -329,7 +413,7 @@ class DbStore:
             }.get(k, k)
             if attr == "owner_id" and v is not None:
                 region_id = row.region_id or self._region_id or "uralsk"
-                row.owner_id = self._require_owner_uuid(v, region_id=region_id)
+                row.owner_id = self._resolve_owner_uuid(v, region_id=region_id)
                 # Drop cached relationship so DTO reloads the new owner code.
                 if "owner" in row.__dict__:
                     del row.__dict__["owner"]
