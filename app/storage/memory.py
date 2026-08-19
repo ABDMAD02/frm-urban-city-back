@@ -364,10 +364,26 @@ class MemoryStore:
         user.passwordChangeRequired = False  # пароль сменён — снимаем force-change
         return True
 
+    def _check_iin_duplicate(self, iin: str | None, exclude_id: str | None = None) -> None:
+        from fastapi import HTTPException
+
+        if not iin:
+            return
+        for u in store.USERS:
+            if u.iin != iin or (exclude_id is not None and u.id == exclude_id):
+                continue
+            if (u.regionId or None) != (self._region_id or None):
+                continue  # ИИН уникален в пределах города
+            raise HTTPException(
+                409,
+                detail={"message": "Человек с таким ИИН уже заведён в городе", "code": "iin_duplicate"},
+            )
+
     def create_user(self, body: CreateUserRequest) -> tuple[User, Credentials]:
         from app.passwords import hash_password
         from fastapi import HTTPException
 
+        self._check_iin_duplicate(body.iin)
         code = store.next_id("u")
         login = unique_login(login_for(body.name), self._login_taken)
         plain = random_temp_password()
@@ -395,6 +411,9 @@ class MemoryStore:
             login=login,
             status="active",
             createdAt=config.today_str(),
+            regionId=self._region_id,
+            iin=body.iin,
+            phone=body.phone,
             passwordChangeRequired=True,
         )
         # Recompute ownerObjectIds after possible link
@@ -418,6 +437,11 @@ class MemoryStore:
             user.microdistrictIds = body.microdistrictIds
         if body.streetIds is not None:
             user.streetIds = body.streetIds
+        if body.iin is not None:
+            self._check_iin_duplicate(body.iin, exclude_id=user.id)
+            user.iin = body.iin
+        if body.phone is not None:
+            user.phone = body.phone
         if body.resetPassword:
             user.status = AccountStatus.active
             plain = random_temp_password()
@@ -559,6 +583,35 @@ class MemoryStore:
             result.created += 1
             result.createdOwnerIds.append(owner.id)
         return result
+
+    def search_owners_and_businesses(self, q: str, limit: int):
+        from app.models import OwnerSearchResult, OwnerSearchPerson, OwnerSearchBusiness
+
+        ql = q.lower()
+        region = self._region_id
+        people: list[OwnerSearchPerson] = []
+        for u in store.USERS:
+            if u.role.value != "owner":
+                continue
+            if region is not None and (u.regionId or None) != region:
+                continue
+            hay = " ".join(x for x in (u.name, u.iin, u.phone, u.login) if x).lower()
+            if ql not in hay:
+                continue
+            bc = sum(1 for o in store.OWNERS if o.ownerUserId == u.id)
+            people.append(OwnerSearchPerson(id=u.id, name=u.name, iin=u.iin, phone=u.phone, login=u.login, businessCount=bc))
+            if len(people) >= limit:
+                break
+        businesses: list[OwnerSearchBusiness] = []
+        for o in store.OWNERS:
+            hay = " ".join(x for x in (o.name, o.bin, o.phone) if x).lower()
+            if ql not in hay:
+                continue
+            oc = sum(1 for obj in store.OBJECTS if obj.ownerId == o.id)
+            businesses.append(OwnerSearchBusiness(id=o.id, name=o.name, bin=o.bin, legalForm=o.legalForm, ownerUserId=o.ownerUserId, objectCount=oc))
+            if len(businesses) >= limit:
+                break
+        return OwnerSearchResult(owners=people, businesses=businesses)
 
     def list_districts(self) -> list[District]:
         region_id = self._region_id or "uralsk"

@@ -235,6 +235,10 @@ class AppUser(Base):
     position: Mapped[str] = mapped_column(Text, nullable=False)
     login: Mapped[Optional[str]] = mapped_column(Text, unique=True)
     email: Mapped[Optional[str]] = mapped_column(Text, unique=True)
+    # ИИН физлица (12 цифр) + телефон. ИИН — единственный надёжный идентификатор
+    # человека в РК; уникален в пределах города (partial unique ниже).
+    iin: Mapped[Optional[str]] = mapped_column(Text)
+    phone: Mapped[Optional[str]] = mapped_column(Text)
     password_hash: Mapped[Optional[str]] = mapped_column(Text)
     status: Mapped[AccountStatus] = mapped_column(
         pg_enum(AccountStatus), nullable=False, server_default="active"
@@ -254,6 +258,18 @@ class AppUser(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+
+    # Один человек (ИИН) заводится в городе один раз. Partial unique — только
+    # для непустых ИИН, чтобы существующие аккаунты без ИИН не ломались.
+    __table_args__ = (
+        Index(
+            "uq_app_user_region_iin",
+            "region_id",
+            "iin",
+            unique=True,
+            postgresql_where=text("iin IS NOT NULL"),
+        ),
+    )
 
     owner: Mapped[Optional[Owner]] = relationship(foreign_keys=[owner_id])
     microdistricts: Mapped[list[UserMicrodistrict]] = relationship(

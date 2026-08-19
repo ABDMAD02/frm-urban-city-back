@@ -19,6 +19,7 @@ from ..models import (
     ChecklistTemplateItem, ChecklistTemplateManageRequest, Street, StreetCreate, StreetPatch,
     GeoConfig, GeoConfigPatch, CurrentCity, DesignCodeCatalogItem, ObjectTypeCatalogItem,
     BulkImportOwnersRequest, BulkImportOwnersResult, RegistryOwnerLookup,
+    OwnerSearchResult,
 )
 import re as _re
 from ..enums import PhotoKind
@@ -107,6 +108,17 @@ def registry_lookup(
             detail={"message": "В гос-реестре ничего не найдено по этому БИН", "code": "registry_not_found"},
         )
     return RegistryOwnerLookup(**found)
+
+
+@router.get("/owners/search", response_model=OwnerSearchResult, summary="Единый поиск владельцев и бизнесов")
+def search_owners(
+    repo: StoreDep,
+    q: str = Query(..., min_length=2, description="ИИН, БИН, ФИО, название или телефон"),
+    limit: int = Query(20, ge=1, le=100),
+    user: User = Depends(require_operator),
+) -> OwnerSearchResult:
+    # q<2 → FastAPI сам вернёт 422 (min_length) без обращения к БД. Скоуп — регион из JWT.
+    return repo.search_owners_and_businesses(q.strip(), limit)
 
 
 @router.post("/owners", response_model=CreateOwnerResponse, status_code=201, summary="Создать собственника")
