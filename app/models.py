@@ -34,6 +34,8 @@ class User(BaseModel):
     createdAt: str | None = None
     regionId: str | None = None
     email: str | None = None
+    iin: str | None = None      # ИИН физлица — единственный надёжный идентификатор человека в РК
+    phone: str | None = None
     # true, пока пользователь не сменил выданный temp-пароль (force change при первом входе)
     passwordChangeRequired: bool = False
 
@@ -46,6 +48,32 @@ class Owner(BaseModel):
     phone: str | None = None   # nullable: импортированные из госреестра бизнесы без телефона
     email: str | None = None
     ownerUserId: str | None = None
+
+
+# ── Единый поиск владельцев и бизнесов (A-BE-2) ───────────────────
+class OwnerSearchPerson(BaseModel):
+    """Аккаунт-владелец (физлицо) в результатах поиска."""
+    id: str
+    name: str
+    iin: str | None = None
+    phone: str | None = None
+    login: str | None = None
+    businessCount: int = 0
+
+
+class OwnerSearchBusiness(BaseModel):
+    """Карточка бизнеса в результатах поиска."""
+    id: str
+    name: str
+    bin: str | None = None
+    legalForm: LegalForm
+    ownerUserId: str | None = None
+    objectCount: int = 0
+
+
+class OwnerSearchResult(BaseModel):
+    owners: list[OwnerSearchPerson] = Field(default_factory=list)
+    businesses: list[OwnerSearchBusiness] = Field(default_factory=list)
 
 
 # ── Фото / чек-лист / проверки / предписания ──────────────────────
@@ -249,6 +277,8 @@ class CreateUserRequest(BaseModel):
     position: str
     microdistrictIds: list[str] | None = None
     streetIds: list[str] | None = None
+    iin: str | None = None
+    phone: str | None = None
     # Для role=owner: id карточки собственника. Если не передан — создаётся автоматически.
     ownerId: str | None = None
 
@@ -273,6 +303,8 @@ class UpdateUserRequest(BaseModel):
     resetPassword: bool | None = None
     microdistrictIds: list[str] | None = None
     streetIds: list[str] | None = None
+    iin: str | None = None
+    phone: str | None = None
 
 
 class UpdateUserResponse(BaseModel):
@@ -476,10 +508,14 @@ class Notification(BaseModel):
 
 
 class GeocodeResult(BaseModel):
-    address: str
-    street: str
-    districtId: str
-    microdistrictId: str
+    address: str | None = None
+    street: str | None = None
+    house: str | None = None
+    # Идентификаторы справочников — только при уверенном совпадении по имени (иначе null).
+    streetId: str | None = None
+    microdistrictId: str | None = None
+    districtId: str | None = None
+    confidence: str | None = None  # "high" | "low"
 
 
 class SearchResult(BaseModel):

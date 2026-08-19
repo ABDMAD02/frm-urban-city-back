@@ -71,6 +71,8 @@ def user(row: orm.AppUser, *, microdistrict_ids: list[str] | None = None, street
         createdAt=_d(row.created_at),
         regionId=row.region_id,
         email=row.email,
+        iin=row.iin,
+        phone=row.phone,
         passwordChangeRequired=row.password_change_required,
     )
 

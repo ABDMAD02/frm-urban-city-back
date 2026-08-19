@@ -653,6 +653,23 @@ class DbStore:
             select(m.AppUser.id).where(func.lower(m.AppUser.login) == login.lower())
         ) is not None
 
+    def _check_iin_duplicate(self, iin: str | None, region_id: str, exclude_id=None) -> None:
+        # ИИН уникален в пределах города (partial unique в БД; здесь — понятная 409).
+        from fastapi import HTTPException
+
+        if not iin:
+            return
+        stmt = select(m.AppUser.id).where(
+            m.AppUser.region_id == region_id, m.AppUser.iin == iin
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(m.AppUser.id != exclude_id)
+        if self._session.scalar(stmt) is not None:
+            raise HTTPException(
+                409,
+                detail={"message": "Человек с таким ИИН уже заведён в городе", "code": "iin_duplicate"},
+            )
+
     def authenticate_lookup(self, email_or_login: str) -> tuple[User | None, str | None]:
         """Найти пользователя по email/login и вернуть (User, password_hash)."""
         key = email_or_login.strip().lower()
@@ -758,6 +775,7 @@ class DbStore:
         from app.passwords import hash_password
 
         region_id = self._region_id or "uralsk"
+        self._check_iin_duplicate(body.iin, region_id)
         code = self.next_id("u")
         login = unique_login(login_for(body.name), self._login_taken)
         plain = random_temp_password()
@@ -769,6 +787,8 @@ class DbStore:
             role=body.role,
             position=body.position.strip(),
             login=login,
+            iin=body.iin,
+            phone=body.phone,
             password_hash=hash_password(plain),
             password_change_required=True,
             status=AccountStatus.active,
@@ -830,6 +850,11 @@ class DbStore:
                 st_uid = self._resolve_uuid(m.Street, st_code)
                 if st_uid is not None:
                     self._session.add(m.UserStreet(user_id=row.id, street_id=st_uid))
+        if body.iin is not None:
+            self._check_iin_duplicate(body.iin, row.region_id, exclude_id=row.id)
+            row.iin = body.iin
+        if body.phone is not None:
+            row.phone = body.phone
         if body.resetPassword:
             from app.passwords import hash_password
 
@@ -866,6 +891,50 @@ class DbStore:
                 return []
             q = q.where(m.Owner.owner_user_id == uid)
         return [self._owner_dto(r) for r in self._session.scalars(q).all()]
+
+    def search_owners_and_businesses(self, q: str, limit: int):
+        from app.models import OwnerSearchResult, OwnerSearchPerson, OwnerSearchBusiness
+
+        like = f"%{q.lower()}%"
+        region = self._region_id
+        # Владельцы (аккаунты role=owner) — по ФИО/ИИН/телефону/логину.
+        uq = select(m.AppUser).where(m.AppUser.role == Role.owner)
+        if region:
+            uq = uq.where(m.AppUser.region_id == region)
+        uq = uq.where(
+            or_(
+                func.lower(m.AppUser.name).like(like),
+                func.lower(m.AppUser.iin).like(like),
+                func.lower(m.AppUser.phone).like(like),
+                func.lower(m.AppUser.login).like(like),
+            )
+        ).limit(limit)
+        people: list[OwnerSearchPerson] = []
+        for u in self._session.scalars(uq).all():
+            du = self._map_user(u)
+            bc = self._session.scalar(
+                select(func.count(m.Owner.id)).where(m.Owner.owner_user_id == u.id)
+            ) or 0
+            people.append(OwnerSearchPerson(id=du.id, name=du.name, iin=du.iin, phone=du.phone, login=du.login, businessCount=bc))
+        # Бизнесы — по названию/БИН/телефону.
+        oq = select(m.Owner)
+        if region:
+            oq = oq.where(m.Owner.region_id == region)
+        oq = oq.where(
+            or_(
+                func.lower(m.Owner.name).like(like),
+                func.lower(m.Owner.bin).like(like),
+                func.lower(m.Owner.phone).like(like),
+            )
+        ).limit(limit)
+        businesses: list[OwnerSearchBusiness] = []
+        for o in self._session.scalars(oq).all():
+            dto_o = self._owner_dto(o)
+            oc = self._session.scalar(
+                select(func.count(m.CityObject.id)).where(m.CityObject.owner_id == o.id)
+            ) or 0
+            businesses.append(OwnerSearchBusiness(id=dto_o.id, name=dto_o.name, bin=dto_o.bin, legalForm=dto_o.legalForm, ownerUserId=dto_o.ownerUserId, objectCount=oc))
+        return OwnerSearchResult(owners=people, businesses=businesses)
 
     def find_owner(self, wid: str) -> Owner | None:
         uid = self._resolve_uuid(m.Owner, wid)
