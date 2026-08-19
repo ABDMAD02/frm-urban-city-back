@@ -271,6 +271,33 @@ async def import_objects_file(
     return repo.import_objects(items, user)
 
 
+@router.post("/objects/import-osm", response_model=ObjectImportResult, summary="Сев объектов из OpenStreetMap (Overpass)")
+def import_objects_osm(
+    repo: StoreDep,
+    radius_m: int = Query(12000, ge=500, le=50000, description="Радиус вокруг центра города, м"),
+    user: User = Depends(require_region_admin),
+) -> ObjectImportResult:
+    # POI города из OSM вокруг центра карты → импорт (дедуп на слое стора).
+    # Данные под ODbL: на клиенте обязательна атрибуция «© OpenStreetMap».
+    from ..services import osm_poi
+
+    city = repo.get_current_city()
+    if city.centerLat is None or city.centerLng is None:
+        raise HTTPException(
+            422,
+            detail={"message": "У города не задан центр карты — сначала укажите центр", "code": "no_city_center"},
+        )
+    try:
+        items = osm_poi.fetch_pois(city.centerLat, city.centerLng, radius_m)
+    except osm_poi.OverpassUnavailable:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"message": "OpenStreetMap (Overpass) недоступен, попробуйте позже", "code": "overpass_unavailable"},
+        )
+    # Защита от гигантских выгрузок в одном вызове.
+    return repo.import_objects(items[:5000], user)
+
+
 @router.get("/geocode/reverse", response_model=GeocodeResult, summary="Адрес по координатам")
 def reverse_geocode(
     repo: StoreDep,
