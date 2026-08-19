@@ -53,6 +53,12 @@ GEOCODER_PROVIDER = os.getenv("GEOCODER_PROVIDER", "off").strip().lower()
 # при использовании обязательна атрибуция «© OpenStreetMap contributors».
 OVERPASS_URL = os.getenv("OVERPASS_URL", "https://overpass-api.de/api/interpreter").strip()
 OVERPASS_TIMEOUT = int(os.getenv("OVERPASS_TIMEOUT", "90"))
+
+# Максимум объектов, импортируемых из OSM за ОДИН вызов. Создание объекта в
+# PostgreSQL ~0,7 с (вставка + история + версия), а прокси перед API обрывает
+# запрос по таймауту: 288 точек в одном вызове давали 504. Полный сев города
+# делается несколькими вызовами либо офлайн-скриптом.
+OSM_IMPORT_MAX = int(os.getenv("OSM_IMPORT_MAX", "50"))
 EGOV_OPENDATA_TIMEOUT = int(os.getenv("EGOV_OPENDATA_TIMEOUT", "30"))
 
 # Cloudflare R2 (S3-compatible). Bucket: frm-urban-city

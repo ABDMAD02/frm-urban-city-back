@@ -279,6 +279,7 @@ def import_objects_osm(
 ) -> ObjectImportResult:
     # POI города из OSM вокруг центра карты → импорт (дедуп на слое стора).
     # Данные под ODbL: на клиенте обязательна атрибуция «© OpenStreetMap».
+    from .. import config
     from ..services import osm_poi
 
     city = repo.get_current_city()
@@ -294,8 +295,17 @@ def import_objects_osm(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"message": "OpenStreetMap (Overpass) недоступен, попробуйте позже", "code": "overpass_unavailable"},
         )
-    # Защита от гигантских выгрузок в одном вызове.
-    return repo.import_objects(items[:5000], user)
+    # Кап на один вызов: синхронный импорт упирается в таймаут прокси
+    # (замер на проде: ~0,7 с на объект, 288 точек → 504). Остаток берётся
+    # повторным вызовом — дедуп по координатам и названию не создаст дублей.
+    batch = items[: config.OSM_IMPORT_MAX]
+    result = repo.import_objects(batch, user)
+    if len(items) > len(batch):
+        result.failed.append(
+            f"Найдено {len(items)} точек, импортировано {len(batch)} за вызов "
+            f"(лимит OSM_IMPORT_MAX={config.OSM_IMPORT_MAX}). Повторите импорт для остальных."
+        )
+    return result
 
 
 @router.get("/geocode/reverse", response_model=GeocodeResult, summary="Адрес по координатам")
