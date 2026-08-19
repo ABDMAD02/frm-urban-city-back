@@ -48,6 +48,7 @@ class Owner(BaseModel):
     phone: str | None = None   # nullable: импортированные из госреестра бизнесы без телефона
     email: str | None = None
     ownerUserId: str | None = None
+    archivedAt: str | None = None  # мягкое архивирование (A-BE-6); архивные не в списке
 
 
 # ── Единый поиск владельцев и бизнесов (A-BE-2) ───────────────────
@@ -200,6 +201,21 @@ class CreateObjectRequest(BaseModel):
     house: str | None = None
     apartment: str | None = None
     ownerId: str | None = None
+
+
+class ObjectImportItem(BaseModel):
+    name: str
+    type: str = "Объект"
+    lat: float
+    lng: float
+    address: str | None = None
+    bin: str | None = None       # БИН владельца → привязка к бизнесу (если найден)
+
+
+class ObjectImportResult(BaseModel):
+    created: int = 0
+    skipped: int = 0                              # дубли по паре координат + названию
+    failed: list[str] = Field(default_factory=list)
 
 
 class BulkDeleteObjectsRequest(BaseModel):
