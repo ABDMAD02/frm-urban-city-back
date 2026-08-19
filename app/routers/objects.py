@@ -289,4 +289,17 @@ def reverse_geocode(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"message": "Обратный геокодер недоступен", "code": "geocoder_unavailable"},
         )
-    return GeocodeResult(**data)
+    # Имя улицы/мкр из геокодера → id справочника города (клиент проставит выпадашки).
+    st_id, md_id, d_id = geocoder.match_ids(
+        data.get("street"), data.get("microdistrict"),
+        repo.list_streets(), repo.list_microdistricts(),
+    )
+    return GeocodeResult(
+        address=data.get("address"),
+        street=data.get("street"),
+        house=data.get("house"),
+        streetId=st_id,
+        microdistrictId=md_id,
+        districtId=d_id,
+        confidence=data.get("confidence"),
+    )
