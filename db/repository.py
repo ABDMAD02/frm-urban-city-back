@@ -186,6 +186,41 @@ class DbStore:
         rows = self._session.scalars(q).all()
         return [mappers.city_object(r) for r in rows]
 
+    def import_objects(self, items, actor: User):
+        """Массовый импорт объектов (B-BE-4). Дедуп по паре координат + названию,
+        БИН → привязка к бизнесу региона, если найден."""
+        from app.models import ObjectImportResult, CreateObjectRequest
+
+        region = self._region_id or "uralsk"
+        result = ObjectImportResult()
+        seen: set[tuple] = set()
+        existing = {(round(o.lat, 5), round(o.lng, 5), o.name.strip().lower()) for o in self.list_objects()}
+        for it in items:
+            key = (round(it.lat, 5), round(it.lng, 5), it.name.strip().lower())
+            if key in seen or key in existing:
+                result.skipped += 1
+                continue
+            seen.add(key)
+            owner_code = None
+            if it.bin:
+                row = self._session.scalar(
+                    select(m.Owner).where(
+                        m.Owner.bin == it.bin, m.Owner.region_id == region, m.Owner.archived_at.is_(None)
+                    )
+                )
+                if row:
+                    owner_code = row.code
+            try:
+                self.create_object(
+                    CreateObjectRequest(name=it.name, type=it.type, lat=it.lat, lng=it.lng, address=it.address, ownerId=owner_code),
+                    actor,
+                )
+                self._session.flush()
+                result.created += 1
+            except Exception as exc:  # pragma: no cover
+                result.failed.append(f"{it.name}: {exc}")
+        return result
+
     def find_object(self, oid: str) -> CityObject | None:
         uid = self._object_uuid(oid)
         if uid is None:
@@ -882,7 +917,7 @@ class DbStore:
 
     # ── reference ─────────────────────────────────────────────────
     def list_owners(self, owner_user_id: str | None = None) -> list[Owner]:
-        q = select(m.Owner)
+        q = select(m.Owner).where(m.Owner.archived_at.is_(None))
         if self._region_id:
             q = q.where(m.Owner.region_id == self._region_id)
         if owner_user_id:
@@ -916,8 +951,8 @@ class DbStore:
                 select(func.count(m.Owner.id)).where(m.Owner.owner_user_id == u.id)
             ) or 0
             people.append(OwnerSearchPerson(id=du.id, name=du.name, iin=du.iin, phone=du.phone, login=du.login, businessCount=bc))
-        # Бизнесы — по названию/БИН/телефону.
-        oq = select(m.Owner)
+        # Бизнесы — по названию/БИН/телефону (архивные не показываем).
+        oq = select(m.Owner).where(m.Owner.archived_at.is_(None))
         if region:
             oq = oq.where(m.Owner.region_id == region)
         oq = oq.where(
@@ -942,6 +977,29 @@ class DbStore:
         if row is None:
             return None
         self._ensure_same_region(row.region_id)
+        return self._owner_dto(row)
+
+    def archive_owner(self, wid: str) -> Owner | None:
+        """Мягко архивировать бизнес (A-BE-6). 409, если есть не архивные объекты."""
+        from fastapi import HTTPException
+
+        uid = self._resolve_uuid(m.Owner, wid)
+        row = self._session.get(m.Owner, uid) if uid else None
+        if row is None:
+            return None
+        self._ensure_same_region(row.region_id)
+        if row.archived_at is not None:
+            return self._owner_dto(row)
+        has_objects = self._session.scalar(
+            select(m.CityObject.id).where(m.CityObject.owner_id == row.id).limit(1)
+        )
+        if has_objects is not None:
+            raise HTTPException(
+                409,
+                detail={"message": "У бизнеса есть объекты — сначала перенесите/удалите их", "code": "owner_has_objects"},
+            )
+        row.archived_at = _parse_date(config.today_str())
+        self._session.flush()
         return self._owner_dto(row)
 
     def _check_bin_duplicate(self, bin_value: str | None, exclude_uid=None) -> None:

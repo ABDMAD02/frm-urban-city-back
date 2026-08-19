@@ -1,7 +1,7 @@
 """Объекты города: список (в скоупе роли), создание, правка карточки с FSM, поиск, геокодинг."""
 from __future__ import annotations
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
 from ..deps import StoreDep
 from ..security import accessible_object_ids, ensure_owner_business_access, ensure_object_access, get_current_user, require_operator, require_region_admin
@@ -20,6 +20,7 @@ from ..models import (
     User,
     GeocodeResult,
     SearchResult,
+    ObjectImportResult,
 )
 from ..enums import Role, ObjectStatus
 
@@ -252,6 +253,22 @@ def search(repo: StoreDep, q: str = Query(...), user: User = Depends(get_current
         if ql in o.name.lower() or ql in o.address.lower() or ql in o.type.lower()
     ]
     return SearchResult(objects=found)
+
+
+@router.post("/objects/import-file", response_model=ObjectImportResult, summary="Массовый импорт объектов (CSV/GeoJSON)")
+async def import_objects_file(
+    repo: StoreDep,
+    file: UploadFile = File(...),
+    user: User = Depends(require_operator),
+) -> ObjectImportResult:
+    from ..services.object_import import parse_objects_file
+
+    raw = (await file.read()).decode("utf-8", errors="replace")
+    try:
+        items = parse_objects_file(raw, file.filename or "")
+    except ValueError as exc:
+        raise HTTPException(422, detail={"message": str(exc), "code": "invalid_file"})
+    return repo.import_objects(items, user)
 
 
 @router.get("/geocode/reverse", response_model=GeocodeResult, summary="Адрес по координатам")

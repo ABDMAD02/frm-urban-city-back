@@ -54,6 +54,7 @@ def owner(row: orm.Owner, *, owner_user_id: str | None = None) -> dto.Owner:
         phone=row.phone,
         email=row.email,
         ownerUserId=owner_user_id,
+        archivedAt=_d(row.archived_at) if row.archived_at else None,
     )
 
 

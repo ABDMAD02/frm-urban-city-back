@@ -167,6 +167,15 @@ def update_owner(wid: str, body: CreateOwnerRequest, repo: StoreDep, user: User 
     return owner
 
 
+@router.delete("/owners/{wid}", response_model=Owner, summary="Архивировать бизнес (мягкое удаление)")
+def archive_owner(wid: str, repo: StoreDep, user: User = Depends(require_region_admin)):
+    # Мягкое архивирование (A-BE-6): запрет при наличии не архивных объектов → 409.
+    owner = repo.archive_owner(wid)
+    if owner is None:
+        raise HTTPException(404, "Собственник не найден")
+    return owner
+
+
 @router.get("/districts", response_model=list[District], summary="Районы")
 def list_districts(repo: StoreDep, user: User = Depends(get_current_user)):
     return repo.list_districts()

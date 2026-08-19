@@ -169,6 +169,8 @@ class Owner(Base):
     owner_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("app_user.id", ondelete="SET NULL"), index=True
     )
+    # Мягкое архивирование бизнеса (A-BE-6): архивные не попадают в GET /owners.
+    archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
     __mapper_args__ = {"version_id_col": version}

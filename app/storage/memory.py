@@ -133,6 +133,33 @@ class MemoryStore:
     def list_objects(self) -> list[CityObject]:
         return store.OBJECTS
 
+    def import_objects(self, items, actor: User):
+        """Массовый импорт объектов (B-BE-4). Дедуп по паре координат + названию,
+        БИН → привязка к бизнесу, если найден."""
+        from app.models import ObjectImportResult, CreateObjectRequest
+
+        result = ObjectImportResult()
+        seen: set[tuple] = set()
+        existing = {(round(o.lat, 5), round(o.lng, 5), o.name.strip().lower()) for o in self.list_objects()}
+        for it in items:
+            key = (round(it.lat, 5), round(it.lng, 5), it.name.strip().lower())
+            if key in seen or key in existing:
+                result.skipped += 1
+                continue
+            seen.add(key)
+            owner_id = None
+            if it.bin:
+                owner_id = next((o.id for o in store.OWNERS if o.bin == it.bin and not o.archivedAt), None)
+            try:
+                self.create_object(
+                    CreateObjectRequest(name=it.name, type=it.type, lat=it.lat, lng=it.lng, address=it.address, ownerId=owner_id),
+                    actor,
+                )
+                result.created += 1
+            except Exception as exc:  # pragma: no cover — точечные сбои строк
+                result.failed.append(f"{it.name}: {exc}")
+        return result
+
     def find_object(self, oid: str) -> CityObject | None:
         return store.find_object(oid)
 
@@ -466,13 +493,30 @@ class MemoryStore:
         return user
 
     def list_owners(self, owner_user_id: str | None = None) -> list[Owner]:
-        items = store.OWNERS
+        items = [o for o in store.OWNERS if not o.archivedAt]
         if owner_user_id:
             items = [o for o in items if o.ownerUserId == owner_user_id]
         return items
 
     def find_owner(self, wid: str) -> Owner | None:
         return next((o for o in store.OWNERS if o.id == wid), None)
+
+    def archive_owner(self, wid: str) -> Owner | None:
+        """Мягко архивировать бизнес (A-BE-6). 409, если есть не архивные объекты."""
+        from fastapi import HTTPException
+
+        owner = self.find_owner(wid)
+        if owner is None:
+            return None
+        if owner.archivedAt:
+            return owner
+        if any(obj.ownerId == wid for obj in store.OBJECTS):
+            raise HTTPException(
+                409,
+                detail={"message": "У бизнеса есть объекты — сначала перенесите/удалите их", "code": "owner_has_objects"},
+            )
+        owner.archivedAt = config.today_str()
+        return owner
 
     def _check_bin_duplicate(self, bin_value: str | None, exclude_id: str | None = None) -> None:
         from fastapi import HTTPException
@@ -604,6 +648,8 @@ class MemoryStore:
                 break
         businesses: list[OwnerSearchBusiness] = []
         for o in store.OWNERS:
+            if o.archivedAt:
+                continue
             hay = " ".join(x for x in (o.name, o.bin, o.phone) if x).lower()
             if ql not in hay:
                 continue
