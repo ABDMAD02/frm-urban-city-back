@@ -1150,6 +1150,36 @@ class DbStore:
         self._session.flush()
         return self._owner_dto(row), creds
 
+    def issue_owner_account(self, wid: str):
+        """Создать аккаунт-владельца для существующего бизнеса и привязать. 409, если уже есть."""
+        from fastapi import HTTPException
+        from app.passwords import hash_password
+
+        uid = self._resolve_uuid(m.Owner, wid)
+        row = self._session.get(m.Owner, uid) if uid else None
+        if row is None:
+            return None
+        self._ensure_same_region(row.region_id)
+        if row.owner_user_id is not None:
+            raise HTTPException(
+                409, detail={"message": "У бизнеса уже есть аккаунт-владелец", "code": "already_has_account"},
+            )
+        region_id = row.region_id or self._region_id or "uralsk"
+        ucode = self.next_id("u")
+        login = unique_login(login_for(row.name), self._login_taken)
+        plain = random_temp_password()
+        account = m.AppUser(
+            id=uuid_for_code(ucode), code=ucode, name=row.name.strip(), role=Role.owner,
+            position="Владелец бизнеса", login=login, password_hash=hash_password(plain),
+            password_change_required=True, status=AccountStatus.active, region_id=region_id,
+            created_at=_parse_date(config.today_str()),
+        )
+        self._session.add(account)
+        self._session.flush()
+        row.owner_user_id = account.id
+        self._session.flush()
+        return self._owner_dto(row), Credentials(login=login, tempPassword=plain)
+
     def update_owner(self, wid: str, body: CreateOwnerRequest) -> Owner | None:
         uid = self._resolve_uuid(m.Owner, wid)
         row = self._session.get(m.Owner, uid) if uid else None

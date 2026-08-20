@@ -167,6 +167,17 @@ def update_owner(wid: str, body: CreateOwnerRequest, repo: StoreDep, user: User 
     return owner
 
 
+@router.post("/owners/{wid}/account", response_model=CreateOwnerResponse, status_code=201,
+             summary="Создать аккаунт-владельца существующему бизнесу")
+def issue_owner_account(wid: str, repo: StoreDep, user: User = Depends(require_region_admin)):
+    # Для бизнеса без аккаунта: создаём аккаунт role=owner, привязываем, отдаём креды.
+    result = repo.issue_owner_account(wid)
+    if result is None:
+        raise HTTPException(404, "Собственник не найден")
+    owner, creds = result
+    return CreateOwnerResponse(owner=owner, credentials=creds)
+
+
 @router.delete("/owners/{wid}", response_model=Owner, summary="Архивировать бизнес (мягкое удаление)")
 def archive_owner(wid: str, repo: StoreDep, user: User = Depends(require_region_admin)):
     # Мягкое архивирование (A-BE-6): запрет при наличии не архивных объектов → 409.
