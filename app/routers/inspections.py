@@ -163,6 +163,30 @@ def reinspect(oid: str, body: ReinspectionRequest, repo: StoreDep, user: User = 
             },
         )
     obj = repo.set_object_status(oid, target)
+
+    # Обновляем связанное предписание объекта ПО-ПУНКТНО (не «тупо продлить»).
+    presc = next(
+        (p for p in repo.list_prescriptions()
+         if p.objectId == oid and p.status in (PrescriptionStatus.open, PrescriptionStatus.overdue)),
+        None,
+    )
+    total = len(body.fixed) + len(body.remaining)
+    if total > 0:  # фронт прислал детализацию — собираем осмысленный лог + правим предписание
+        if body.result == ReinspectionResult.fixed:
+            note = f"Повторная проверка: все нарушения устранены ({len(body.fixed)}). Предписание закрыто."
+            if presc:
+                repo.patch_prescription(presc.id, {"status": PrescriptionStatus.fixed})
+        else:
+            new_deadline = config.plus_days_str(config.PRESCRIPTION_DEADLINE_DAYS)
+            remaining_str = "; ".join(body.remaining) if body.remaining else "—"
+            note = (f"Повторная проверка: устранено {len(body.fixed)} из {total}. "
+                    f"Осталось: {remaining_str}. Предписание продлено до {new_deadline}.")
+            if presc:
+                patch = {"status": PrescriptionStatus.open, "deadline": new_deadline, "reinspectionDate": new_deadline}
+                if body.remaining:
+                    patch["description"] = f"Осталось устранить ({len(body.remaining)}): {remaining_str}."
+                repo.patch_prescription(presc.id, patch)
+
     repo.append_history(HistoryEvent(
         id="", objectId=oid, type=HistoryType.reinspection,
         actor=user.name, date=config.today_str(), text=note,

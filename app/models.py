@@ -284,6 +284,9 @@ class InspectionResultView(BaseModel):
 
 class ReinspectionRequest(BaseModel):
     result: ReinspectionResult
+    # По-пунктная детализация (опц., обратная совместимость): что устранено/осталось.
+    fixed: list[str] = Field(default_factory=list)
+    remaining: list[str] = Field(default_factory=list)
 
 
 # ── Пользователи / собственники — тела ────────────────────────────
