@@ -528,6 +528,33 @@ class MemoryStore:
     def find_owner(self, wid: str) -> Owner | None:
         return next((o for o in store.OWNERS if o.id == wid), None)
 
+    def issue_owner_account(self, wid: str):
+        """Создать аккаунт-владельца для существующего бизнеса и привязать.
+        409, если аккаунт уже есть. Возвращает (Owner, Credentials) или None."""
+        from fastapi import HTTPException
+        from app.enums import Role
+        from app.passwords import hash_password
+
+        owner = self.find_owner(wid)
+        if owner is None:
+            return None
+        if owner.ownerUserId:
+            raise HTTPException(
+                409, detail={"message": "У бизнеса уже есть аккаунт-владелец", "code": "already_has_account"},
+            )
+        ucode = store.next_id("u")
+        login = unique_login(login_for(owner.name), self._login_taken)
+        plain = random_temp_password()
+        account = User(
+            id=ucode, name=owner.name.strip(), role=Role.owner, position="Владелец бизнеса",
+            login=login, status="active", createdAt=config.today_str(),
+            regionId=self._region_id, passwordChangeRequired=True,
+        )
+        store.USERS.append(account)
+        self._password_hashes[ucode] = hash_password(plain)
+        owner.ownerUserId = ucode
+        return owner, Credentials(login=login, tempPassword=plain)
+
     def archive_owner(self, wid: str) -> Owner | None:
         """Мягко архивировать бизнес (A-BE-6). 409, если есть не архивные объекты."""
         from fastapi import HTTPException
