@@ -13,3 +13,6 @@ pillow-heif>=0.16
 SQLAlchemy>=2.0
 alembic>=1.13
 psycopg[binary]>=3.1
+
+# PDF-генерация официальных документов (предписания). Pure-python, без нативных зависимостей.
+fpdf2>=2.7

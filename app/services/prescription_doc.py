@@ -7,10 +7,66 @@
 from __future__ import annotations
 
 import html
+from pathlib import Path
+
+_FONT_PATH = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "DejaVuSans.ttf"
 
 
 def _esc(v) -> str:
     return html.escape(str(v)) if v is not None else ""
+
+
+def _s(v) -> str:
+    return str(v) if v is not None else ""
+
+
+def render_pdf(*, city, presc, obj, owner, violations, inspector) -> bytes:
+    """Тот же официальный документ, но настоящий PDF (fpdf2 + кириллический шрифт)."""
+    from fpdf import FPDF
+
+    number = _s(getattr(presc, "id", ""))
+    owner_line = _s(getattr(owner, "name", "")) if owner else "—"
+    if owner and getattr(owner, "bin", None):
+        owner_line += f", БИН {owner.bin}"
+
+    pdf = FPDF(format="A4")
+    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.add_page()
+    pdf.add_font("DejaVu", "", str(_FONT_PATH))
+    W = pdf.w - pdf.l_margin - pdf.r_margin
+
+    def text(s: str, size=11, align="L", gap=1.2):
+        pdf.set_font("DejaVu", "", size)
+        pdf.multi_cell(W, size * 0.5 + 2, _s(s), align=align)
+        pdf.ln(gap)
+
+    text(f"Аппарат акима г. {city}", 12, "C", 0.5)
+    text("Отдел урбанистики и городской среды", 9, "C", 3)
+    text(f"ПРЕДПИСАНИЕ № {number}\nоб устранении нарушений", 14, "C", 0.5)
+    text(f"г. {city} · {getattr(presc, 'issuedAt', '')}", 9, "C", 4)
+
+    text(f"Кому: {owner_line}")
+    text(f"Объект: {getattr(obj, 'name', '')} ({getattr(obj, 'type', '')})")
+    text(f"Адрес: {getattr(obj, 'address', '')}", gap=3)
+
+    text(f"По результатам проверки от {getattr(presc, 'issuedAt', '')} выявлены несоответствия дизайн-коду города:")
+    if violations:
+        for i, v in enumerate(violations, 1):
+            text(f"  {i}. {v}", gap=0.5)
+    else:
+        text(getattr(presc, "description", "") or "—")
+    pdf.ln(2)
+
+    text(f"Требуется устранить нарушения в срок до {getattr(presc, 'deadline', '')}.")
+    text(f"Повторная проверка назначена на {getattr(presc, 'reinspectionDate', '')}.", gap=3)
+    text("Основание: правила благоустройства и дизайн-код города. Неисполнение в срок влечёт "
+         "ответственность согласно законодательству РК.", 9, gap=8)
+
+    text(f"Проверку провёл (урбанист): {_s(inspector or '________________')}", 10, gap=6)
+    text("Подпись / печать: ________________", 10)
+
+    out = pdf.output()
+    return bytes(out)
 
 
 def render_html(*, city, presc, obj, owner, violations, inspector) -> str:

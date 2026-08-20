@@ -24,3 +24,12 @@ def test_prescription_document_html(client, region_admin):
 def test_prescription_document_404(client, region_admin):
     r = client.get(f"{API}/prescriptions/nope-xxx/document", headers=region_admin)
     assert r.status_code == 404, r.text
+
+
+def test_prescription_document_pdf(client, region_admin):
+    pid = _first_pid(client, region_admin)
+    r = client.get(f"{API}/prescriptions/{pid}/document.pdf", headers=region_admin)
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/pdf"
+    assert r.content[:5] == b"%PDF-"          # валидная PDF-сигнатура
+    assert len(r.content) > 1000
