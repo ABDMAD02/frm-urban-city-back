@@ -21,6 +21,7 @@ from ..models import (
     GeocodeResult,
     SearchResult,
     ObjectImportResult,
+    Owner,
 )
 from ..enums import Role, ObjectStatus
 
@@ -204,6 +205,23 @@ def get_object(oid: str, repo: StoreDep, user: User = Depends(get_current_user))
         raise HTTPException(404, detail={"message": "Объект не найден", "code": "not_found"})
     ensure_object_access(repo, user, obj.id)
     return obj
+
+
+@router.get("/objects/{oid}/owner-candidates", response_model=list[Owner],
+            summary="Кандидаты-владельцы по названию объекта (полу-ручной матчинг)")
+def owner_candidates(oid: str, repo: StoreDep, limit: int = Query(5, ge=1, le=20),
+                     user: User = Depends(require_operator)):
+    obj = repo.find_object(oid)
+    if obj is None:
+        raise HTTPException(404, detail={"message": "Объект не найден", "code": "not_found"})
+    ensure_object_access(repo, user, oid)
+    from ..services.owner_match import candidates
+
+    # list_owners уже скоуплен регионом и без архивных; технический владелец
+    # исключается внутри candidates(). Текущего владельца объекта тоже исключим.
+    current = repo.find_owner(obj.ownerId) if getattr(obj, "ownerId", None) else None
+    exclude = {current.name} if current else set()
+    return candidates(obj.name, repo.list_owners(), exclude_names=exclude, limit=limit)
 
 
 @router.patch("/objects/{oid}", response_model=CityObject, summary="Правка карточки")
